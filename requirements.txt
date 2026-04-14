@@ -1,0 +1,10 @@
+
+
+Make sure it contains:
+
+```text id="req1"
+streamlit
+beautifulsoup4
+requests
+PyMuPDF
+google-generativeai
