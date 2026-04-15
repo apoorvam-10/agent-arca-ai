@@ -48,7 +48,7 @@ This topic is important and current. Multiple sources were reviewed and summariz
     # Save memory
     save_memory(query, summary)
 
-    # Better evaluation logic
+    # Evaluation
     readability = min(1.0, len(summary) / 500)
     coverage = min(1.0, len(set(summary.split())) / 100)
     confidence = round((readability + coverage) / 2, 2)
@@ -57,11 +57,6 @@ This topic is important and current. Multiple sources were reviewed and summariz
         "readability": round(readability, 2),
         "coverage": round(coverage, 2),
         "confidence": confidence
-    }
-
-    return synthesis, evaluation
-
-        "confidence": 0.92
     }
 
     return synthesis, evaluation
