@@ -1,6 +1,5 @@
 import streamlit as st
 from pipeline import run_pipeline
-import asyncio
 
 st.set_page_config(page_title="Agent ARCA", page_icon="🤖")
 
@@ -20,7 +19,7 @@ if st.button("Run Agent") and user_input:
     st.session_state.chat.append(("user", user_input))
 
     with st.spinner("Running AI agents..."):
-        synthesis, evaluation = asyncio.run(run_pipeline(user_input, sources))
+        synthesis, evaluation = run_pipeline(user_input, sources)
 
     response = f"""
 📌 **Summary**
