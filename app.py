@@ -1,18 +1,42 @@
 import streamlit as st
 from pipeline import run_pipeline
+import asyncio
 
-st.title("🧠 Agent ARCA - AI Research Assistant")
+st.set_page_config(page_title="Agent ARCA", page_icon="🤖")
 
-query = st.text_input("Enter research topic")
-source = st.text_area("Paste URL or PDF path")
+st.title("🤖 Agent ARCA - AI Research Assistant")
 
-if st.button("Run ARCA"):
+# Session state for chat history
+if "chat" not in st.session_state:
+    st.session_state.chat = []
+
+user_input = st.text_input("Ask your research question:")
+
+sources = [
+    "https://en.wikipedia.org/wiki/Artificial_intelligence"
+]
+
+if st.button("Run Agent") and user_input:
+    st.session_state.chat.append(("user", user_input))
+
     with st.spinner("Running AI agents..."):
+        synthesis, evaluation = asyncio.run(run_pipeline(user_input, sources))
 
-        synthesis, evaluation = run_pipeline(query, [source])
+    response = f"""
+📌 **Summary**
+{synthesis['summary']}
 
-    st.subheader("📌 Summary")
-    st.write(synthesis["summary"])
+📊 **Evaluation**
+- Readability: {evaluation['readability']}
+- Coverage: {evaluation['coverage']}
+- Confidence: {evaluation['confidence']}
+"""
 
-    st.subheader("📊 Evaluation")
-    st.json(evaluation)
+    st.session_state.chat.append(("ai", response))
+
+# Display chat
+for role, msg in st.session_state.chat:
+    if role == "user":
+        st.markdown(f"**🧑 You:** {msg}")
+    else:
+        st.markdown(f"**🤖 ARCA:** {msg}")
