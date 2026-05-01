@@ -32,7 +32,7 @@ def get_model():
         )
 
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-3-flash-preview")
 
 
 # -------------------------
