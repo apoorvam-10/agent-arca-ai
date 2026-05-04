@@ -4,3 +4,4 @@ requests
 google-generativeai
 tavily-python
 PyMuPDF
+gTTS
