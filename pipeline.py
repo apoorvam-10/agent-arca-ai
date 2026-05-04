@@ -1,60 +1,85 @@
-from typing import Dict, List
+from typing import List, Dict, Any
 
+import fitz
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-
-
-# -------------------------
-# MEMORY STORE
-# -------------------------
-memory_store: Dict[str, str] = {}
-
-
-def save_memory(query: str, summary: str) -> None:
-    memory_store[query] = summary
-
-
-def get_memory(query: str) -> str:
-    return memory_store.get(query, "")
+from tavily import TavilyClient
 
 
 # -------------------------
 # GEMINI SETUP
 # -------------------------
-def get_model():
+def get_gemini_model():
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
-        raise ValueError(
-            "Missing GEMINI_API_KEY in Streamlit secrets. "
-            "Add it in your app settings under Secrets."
-        )
+        raise ValueError("Missing GEMINI_API_KEY in Streamlit secrets.")
 
     genai.configure(api_key=api_key)
+
+    # Use the model that already worked for your app.
     return genai.GenerativeModel("gemini-3-flash-preview")
 
 
 # -------------------------
-# HELPERS
+# TAVILY SETUP
 # -------------------------
-def enhance_query(query: str) -> str:
-    return f"Research Request: {query}"
+def get_tavily_client():
+    api_key = st.secrets.get("TAVILY_API_KEY", "")
+    if not api_key:
+        raise ValueError("Missing TAVILY_API_KEY in Streamlit secrets.")
+
+    return TavilyClient(api_key=api_key)
 
 
-def fetch_web_text(url: str) -> str:
+# -------------------------
+# SOURCE NAME CLEANER
+# -------------------------
+def get_source_name(url: str, title: str = "") -> str:
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
+        domain = url.split("//")[-1].split("/")[0]
+        name = domain.replace("www.", "").split(".")[0]
+
+        known_names = {
+            "ibm": "IBM",
+            "who": "WHO",
+            "nih": "NIH",
+            "ncbi": "NCBI",
+            "pmc": "PMC",
+            "cdc": "CDC",
+            "fda": "FDA",
+            "microsoft": "Microsoft",
+            "google": "Google",
+            "openai": "OpenAI",
+            "nature": "Nature",
+            "sciencedirect": "ScienceDirect",
+            "wikipedia": "Wikipedia",
+            "arxiv": "arXiv",
+            "mayoclinic": "Mayo Clinic",
+            "healthline": "Healthline",
+            "webmd": "WebMD",
+            "stanford": "Stanford",
+            "harvard": "Harvard",
+            "mit": "MIT",
         }
+
+        return known_names.get(name.lower(), name.upper())
+    except Exception:
+        return title[:20] if title else "Source"
+
+
+# -------------------------
+# URL READER
+# -------------------------
+def fetch_url_text(url: str) -> Dict[str, Any]:
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
+        title = soup.title.string.strip() if soup.title and soup.title.string else url
 
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
@@ -62,86 +87,271 @@ def fetch_web_text(url: str) -> str:
         paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
         text = " ".join(p for p in paragraphs if p)
 
-        if not text.strip():
+        if not text:
             text = soup.get_text(" ", strip=True)
 
-        return text[:12000]
-    except Exception as exc:
-        return f"Error fetching {url}: {exc}"
+        source_name = get_source_name(url, title)
+
+        return {
+            "title": title,
+            "source_name": source_name,
+            "url": url,
+            "text": text[:12000],
+            "type": "url",
+        }
+
+    except Exception as e:
+        return {
+            "title": f"Failed to read URL: {url}",
+            "source_name": "Source",
+            "url": url,
+            "text": f"Error: {str(e)}",
+            "type": "url_error",
+        }
 
 
-def build_prompt(query: str, combined_text: str, sources: List[str], memory: str) -> str:
-    sources_block = "\n".join(f"- {src}" for src in sources)
+# -------------------------
+# PDF READER
+# -------------------------
+def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
+    try:
+        pdf_bytes = uploaded_pdf.read()
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        pages = []
+        for page in doc:
+            pages.append(page.get_text())
+
+        text = "\n".join(pages)
+        title = uploaded_pdf.name
+
+        source_name = (
+            title.replace(".pdf", "")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()[:25]
+        )
+
+        if not source_name:
+            source_name = "PDF"
+
+        return {
+            "title": title,
+            "source_name": source_name,
+            "url": title,
+            "text": text[:15000],
+            "type": "pdf",
+        }
+
+    except Exception as e:
+        return {
+            "title": uploaded_pdf.name,
+            "source_name": "PDF",
+            "url": uploaded_pdf.name,
+            "text": f"Error reading PDF: {str(e)}",
+            "type": "pdf_error",
+        }
+
+
+# -------------------------
+# WEB SEARCH
+# -------------------------
+def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    client = get_tavily_client()
+
+    search_result = client.search(
+        query=query,
+        search_depth="advanced",
+        max_results=max_results,
+        include_answer=False,
+        include_raw_content=True,
+    )
+
+    sources = []
+
+    for item in search_result.get("results", []):
+        title = item.get("title") or item.get("url", "Untitled Source")
+        url = item.get("url", "")
+        content = item.get("raw_content") or item.get("content") or ""
+        source_name = get_source_name(url, title)
+
+        sources.append(
+            {
+                "title": title,
+                "source_name": source_name,
+                "url": url,
+                "text": content[:12000],
+                "type": "web_search",
+            }
+        )
+
+    return sources
+
+
+# -------------------------
+# PROMPT BUILDER
+# -------------------------
+def build_prompt(
+    question: str,
+    sources: List[Dict[str, Any]],
+    previous_context: str,
+    chat_history: List[Any],
+) -> str:
+    source_blocks = []
+
+    for i, src in enumerate(sources, start=1):
+        source_blocks.append(
+            f"""
+Source {i}
+Citation name to use in answer: [{src["source_name"]}]
+Title: {src["title"]}
+URL: {src["url"]}
+Type: {src["type"]}
+Content:
+{src["text"]}
+"""
+        )
+
+    sources_text = "\n\n".join(source_blocks)
+
+    recent_chat = chat_history[-6:] if chat_history else []
+    chat_text = "\n".join([f"{role}: {msg}" for role, msg in recent_chat])
 
     return f"""
-You are Agent ARCA, an AI research assistant.
+You are Agent ARCA, a trustworthy AI research assistant.
 
-Task:
-- Summarize the research topic clearly and accurately
-- Extract the most important insights
-- Keep the answer structured and concise
-- Mention patterns or themes across sources when possible
-- If content is weak or incomplete, say so honestly
+Your job:
+- Answer the user's question using only the provided sources.
+- Use short source citations exactly like [IBM], [WHO], [NCBI], [PMC], [Wikipedia], etc.
+- Do NOT include full URLs in the answer.
+- Do NOT use markdown links like [IBM](url).
+- Do NOT use long citations like [Source 1].
+- The app will make citations clickable later, so only write the short citation name in square brackets.
+- If the sources do not contain enough evidence, say that clearly.
+- Be simple enough for non-technical users.
+- Do not invent citations or sources.
+- Keep the answer structured and easy to read.
 
-User Query:
-{query}
+User question:
+{question}
+
+Previous research context:
+{previous_context if previous_context else "No previous context yet."}
+
+Recent conversation:
+{chat_text if chat_text else "No previous conversation."}
 
 Sources:
-{sources_block}
-
-Previous memory for this exact query:
-{memory if memory else "No previous memory."}
-
-Source content:
-{combined_text}
+{sources_text}
 
 Return this format:
-1. Short overview
-2. Key insights (3 to 5 bullets)
-3. Final takeaway
+
+## Answer
+Clear answer with short citations like [IBM].
+
+## Key Points
+- Point 1 [SourceName]
+- Point 2 [SourceName]
+- Point 3 [SourceName]
+
+## Simple Summary
+Explain in very simple words.
+
+## What I verified from sources
+Briefly say what was supported by the sources.
+
+## Limits
+Mention anything that was unclear or not available from the sources.
 """.strip()
+
+
+# -------------------------
+# EVALUATION
+# -------------------------
+def evaluate_answer(answer: str, source_count: int) -> Dict[str, float]:
+    readability = min(1.0, len(answer) / 1500)
+    coverage = min(1.0, source_count / 5)
+    confidence = round((readability + coverage) / 2, 2)
+
+    return {
+        "readability": round(readability, 2),
+        "coverage": round(coverage, 2),
+        "confidence": confidence,
+    }
 
 
 # -------------------------
 # MAIN PIPELINE
 # -------------------------
-def run_pipeline(query: str, sources: List[str]):
-    enhanced_query = enhance_query(query)
-    previous_memory = get_memory(enhanced_query)
+def run_pipeline(
+    question: str,
+    urls: List[str],
+    uploaded_pdfs,
+    mode: str,
+    previous_context: str = None,
+    chat_history: List[Any] = None,
+) -> Dict[str, Any]:
+    all_sources = []
 
-    collected_chunks = []
-    processed_sources = []
+    # 1. Read user-provided URLs and PDFs
+    if mode in ["Use my sources", "Use my sources + web search"]:
+        for url in urls:
+            all_sources.append(fetch_url_text(url))
 
-    for source in sources:
-        text = fetch_web_text(source)
-        collected_chunks.append(f"\nSOURCE: {source}\n{text}\n")
-        processed_sources.append(source)
+        if uploaded_pdfs:
+            for pdf in uploaded_pdfs:
+                all_sources.append(extract_pdf_text(pdf))
 
-    combined_text = "\n".join(collected_chunks)[:20000]
+    # 2. Search web if requested OR if no source was provided
+    should_search_web = (
+        mode in ["Search the web", "Use my sources + web search"]
+        or len(all_sources) == 0
+    )
 
-    model = get_model()
-    prompt = build_prompt(enhanced_query, combined_text, processed_sources, previous_memory)
+    if should_search_web:
+        web_sources = search_web(question)
+        all_sources.extend(web_sources)
+
+    # 3. Generate answer
+    model = get_gemini_model()
+
+    prompt = build_prompt(
+        question=question,
+        sources=all_sources,
+        previous_context=previous_context or "",
+        chat_history=chat_history or [],
+    )
+
     response = model.generate_content(prompt)
-    summary = getattr(response, "text", "").strip()
+    answer = getattr(response, "text", "").strip()
 
-    if not summary:
-        summary = "No summary was generated."
+    if not answer:
+        answer = "I could not generate an answer from the available sources."
 
-    save_memory(enhanced_query, summary)
+    # 4. Save compact context for follow-up questions
+    new_context = f"""
+Last question: {question}
 
-    summary_words = summary.split()
-    readability = min(1.0, len(summary) / 1200)
-    coverage = min(1.0, len(set(summary_words)) / 120) if summary_words else 0.0
-    confidence = round((readability + coverage) / 2, 2)
+Last answer:
+{answer[:3000]}
 
-    synthesis = {
-        "summary": summary
+Sources used:
+{", ".join([src["source_name"] for src in all_sources])}
+""".strip()
+
+    evaluation = evaluate_answer(answer, len(all_sources))
+
+    return {
+        "answer": answer,
+        "sources": [
+            {
+                "title": src["title"],
+                "source_name": src["source_name"],
+                "url": src["url"],
+                "type": src["type"],
+            }
+            for src in all_sources
+        ],
+        "context": new_context,
+        "evaluation": evaluation,
     }
-
-    evaluation = {
-        "readability": round(readability, 2),
-        "coverage": round(coverage, 2),
-        "confidence": confidence
-    }
-
-    return synthesis, evaluation

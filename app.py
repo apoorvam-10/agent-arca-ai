@@ -1,62 +1,113 @@
+import re
 import streamlit as st
 from pipeline import run_pipeline
 
-st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="wide")
 
-st.title("🤖 Agent ARCA - AI Research Assistant")
-st.caption("Research topics from URLs with AI-generated summaries and evaluation metrics.")
+st.title("🤖 Agent ARCA")
+st.caption("AI research assistant for URLs, PDFs, and web research with source-backed answers.")
 
-if "chat" not in st.session_state:
-    st.session_state.chat = []
 
-user_input = st.text_input("Ask your research question:")
-sources_input = st.text_area(
-    "Paste URLs (one per line):",
-    placeholder="https://en.wikipedia.org/wiki/Artificial_intelligence\nhttps://example.com/article",
-)
+def make_clickable_citations(answer, sources):
+    """
+    Converts plain citations like [IBM] into clickable citations.
+    Example: [IBM] becomes clickable but still displays only as [IBM].
+    """
+    for src in sources:
+        name = src.get("source_name", "")
+        url = src.get("url", "")
 
-sources = [s.strip() for s in sources_input.split("\n") if s.strip()]
+        if not name or not url:
+            continue
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    run_clicked = st.button("Run Agent", use_container_width=True)
-with col2:
-    clear_clicked = st.button("Clear Chat", use_container_width=True)
+        escaped_name = re.escape(name)
 
-if clear_clicked:
-    st.session_state.chat = []
-    st.rerun()
+        answer = re.sub(
+            rf"\[{escaped_name}\]",
+            f'<a href="{url}" target="_blank">[{name}]</a>',
+            answer,
+        )
 
-if run_clicked:
-    if not user_input.strip():
-        st.warning("Please enter a research question.")
-    elif not sources:
-        st.warning("Please add at least one URL.")
-    else:
-        st.session_state.chat.append(("user", user_input.strip()))
+    return answer
 
-        with st.spinner("Running AI agents..."):
-            synthesis, evaluation = run_pipeline(user_input.strip(), sources)
 
-        response = f"""
-### 📌 Summary
-{synthesis["summary"]}
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-### 📊 Evaluation
-- **Readability:** {evaluation["readability"]}
-- **Coverage:** {evaluation["coverage"]}
-- **Confidence:** {evaluation["confidence"]}
-"""
+if "research_context" not in st.session_state:
+    st.session_state.research_context = None
 
-        st.session_state.chat.append(("ai", response))
+with st.sidebar:
+    st.header("Research Sources")
+
+    mode = st.radio(
+        "Choose mode",
+        [
+            "Use my sources",
+            "Search the web",
+            "Use my sources + web search",
+        ],
+    )
+
+    urls_input = st.text_area(
+        "Paste URLs, one per line",
+        placeholder="https://example.com/article\nhttps://example.com/paper",
+    )
+
+    uploaded_pdfs = st.file_uploader(
+        "Upload PDF files",
+        type=["pdf"],
+        accept_multiple_files=True,
+    )
+
+    st.divider()
+
+    if st.button("Clear Chat"):
+        st.session_state.chat_history = []
+        st.session_state.research_context = None
         st.rerun()
 
-st.divider()
+question = st.chat_input("Ask a research question...")
 
-for role, msg in st.session_state.chat:
-    if role == "user":
-        with st.chat_message("user"):
-            st.markdown(msg)
-    else:
-        with st.chat_message("assistant"):
-            st.markdown(msg)
+for role, message in st.session_state.chat_history:
+    with st.chat_message(role):
+        if role == "assistant":
+            st.markdown(message, unsafe_allow_html=True)
+        else:
+            st.markdown(message)
+
+if question:
+    st.session_state.chat_history.append(("user", question))
+
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
+
+    with st.chat_message("assistant"):
+        with st.spinner("ARCA is researching..."):
+            result = run_pipeline(
+                question=question,
+                urls=urls,
+                uploaded_pdfs=uploaded_pdfs,
+                mode=mode,
+                previous_context=st.session_state.research_context,
+                chat_history=st.session_state.chat_history,
+            )
+
+        st.session_state.research_context = result["context"]
+
+        answer = result["answer"]
+        clickable_answer = make_clickable_citations(answer, result["sources"])
+
+        st.markdown(clickable_answer, unsafe_allow_html=True)
+
+        if result["sources"]:
+            st.divider()
+            st.markdown("### Sources used")
+            for i, src in enumerate(result["sources"], start=1):
+                st.markdown(
+                    f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
+                )
+
+    st.session_state.chat_history.append(("assistant", clickable_answer))
