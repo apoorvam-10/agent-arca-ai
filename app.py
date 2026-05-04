@@ -1,5 +1,8 @@
 import re
+import tempfile
+
 import streamlit as st
+from gtts import gTTS
 from pipeline import run_pipeline
 
 st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="wide")
@@ -9,10 +12,6 @@ st.caption("AI research assistant for URLs, PDFs, and web research with source-b
 
 
 def make_clickable_citations(answer, sources):
-    """
-    Converts plain citations like [IBM] into clickable citations.
-    Example: [IBM] becomes clickable but still displays only as [IBM].
-    """
     for src in sources:
         name = src.get("source_name", "")
         url = src.get("url", "")
@@ -29,6 +28,17 @@ def make_clickable_citations(answer, sources):
         )
 
     return answer
+
+
+def create_audio_file(text):
+    clean_text = re.sub(r"<[^>]+>", "", text)
+    clean_text = re.sub(r"\[|\]|\(|\)", "", clean_text)
+
+    tts = gTTS(clean_text)
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(temp_file.name)
+
+    return temp_file.name
 
 
 if "chat_history" not in st.session_state:
@@ -67,17 +77,32 @@ with st.sidebar:
         st.session_state.research_context = None
         st.rerun()
 
+
 question = st.chat_input("Ask a research question...")
 
-for role, message in st.session_state.chat_history:
+for index, item in enumerate(st.session_state.chat_history):
+    role = item["role"]
+    message = item["message"]
+    raw_answer = item.get("raw_answer", message)
+
     with st.chat_message(role):
         if role == "assistant":
             st.markdown(message, unsafe_allow_html=True)
+
+            audio_file = create_audio_file(raw_answer)
+            st.audio(audio_file, format="audio/mp3")
+
         else:
             st.markdown(message)
 
+
 if question:
-    st.session_state.chat_history.append(("user", question))
+    st.session_state.chat_history.append(
+        {
+            "role": "user",
+            "message": question,
+        }
+    )
 
     with st.chat_message("user"):
         st.markdown(question)
@@ -92,7 +117,10 @@ if question:
                 uploaded_pdfs=uploaded_pdfs,
                 mode=mode,
                 previous_context=st.session_state.research_context,
-                chat_history=st.session_state.chat_history,
+                chat_history=[
+                    (item["role"], item["message"])
+                    for item in st.session_state.chat_history
+                ],
             )
 
         st.session_state.research_context = result["context"]
@@ -102,6 +130,9 @@ if question:
 
         st.markdown(clickable_answer, unsafe_allow_html=True)
 
+        audio_file = create_audio_file(answer)
+        st.audio(audio_file, format="audio/mp3")
+
         if result["sources"]:
             st.divider()
             st.markdown("### Sources used")
@@ -110,4 +141,10 @@ if question:
                     f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
                 )
 
-    st.session_state.chat_history.append(("assistant", clickable_answer))
+    st.session_state.chat_history.append(
+        {
+            "role": "assistant",
+            "message": clickable_answer,
+            "raw_answer": answer,
+        }
+    )
