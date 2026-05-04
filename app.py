@@ -30,9 +30,36 @@ def make_clickable_citations(answer, sources):
     return answer
 
 
+def remove_section_titles(text):
+    text = re.sub(r"##\s*Answer", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"##\s*Key Points", "Key points:", text, flags=re.IGNORECASE)
+    text = re.sub(r"##\s*Simple Summary", "Simple summary:", text, flags=re.IGNORECASE)
+    text = re.sub(r"##\s*What I verified from sources", "What I verified:", text, flags=re.IGNORECASE)
+    text = re.sub(r"##\s*Limits", "Limits:", text, flags=re.IGNORECASE)
+    return text
+
 def create_audio_file(text):
-    clean_text = re.sub(r"<[^>]+>", "", text)
-    clean_text = re.sub(r"\[|\]|\(|\)", "", clean_text)
+    clean_text = remove_section_titles(text)
+
+    # Remove Markdown headings like ## Answer
+    clean_text = re.sub(r"#+\s*", "", clean_text)
+
+    # Remove citation brackets but keep source name readable
+    clean_text = re.sub(r"\[([^\]]+)\]", r" source: \1", clean_text)
+
+    # Remove Markdown links but keep only the readable label
+    clean_text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r" source: \1", clean_text)
+
+    # Remove bullets and extra symbols
+    clean_text = clean_text.replace("*", "")
+    clean_text = clean_text.replace("-", " ")
+    clean_text = clean_text.replace("_", " ")
+
+    # Make spacing cleaner
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+
+    # Optional: shorten very long audio
+    clean_text = clean_text[:3500]
 
     tts = gTTS(clean_text)
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
