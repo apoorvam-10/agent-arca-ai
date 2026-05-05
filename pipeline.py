@@ -1,30 +1,28 @@
 from typing import List, Dict, Any
+import re
 
+import os
+import tempfile
+import webvtt
+import yt_dlp
 import fitz
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 from tavily import TavilyClient
+from youtube_transcript_api import YouTubeTranscriptApi
 
 
-# -------------------------
-# GEMINI SETUP
-# -------------------------
 def get_gemini_model():
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY in Streamlit secrets.")
 
     genai.configure(api_key=api_key)
-
-    # Use the model that already worked for your app.
     return genai.GenerativeModel("gemini-3-flash-preview")
 
 
-# -------------------------
-# TAVILY SETUP
-# -------------------------
 def get_tavily_client():
     api_key = st.secrets.get("TAVILY_API_KEY", "")
     if not api_key:
@@ -33,9 +31,6 @@ def get_tavily_client():
     return TavilyClient(api_key=api_key)
 
 
-# -------------------------
-# SOURCE NAME CLEANER
-# -------------------------
 def get_source_name(url: str, title: str = "") -> str:
     try:
         domain = url.split("//")[-1].split("/")[0]
@@ -56,12 +51,8 @@ def get_source_name(url: str, title: str = "") -> str:
             "sciencedirect": "ScienceDirect",
             "wikipedia": "Wikipedia",
             "arxiv": "arXiv",
-            "mayoclinic": "Mayo Clinic",
-            "healthline": "Healthline",
-            "webmd": "WebMD",
-            "stanford": "Stanford",
-            "harvard": "Harvard",
-            "mit": "MIT",
+            "youtube": "YouTube",
+            "youtu": "YouTube",
         }
 
         return known_names.get(name.lower(), name.upper())
@@ -69,9 +60,112 @@ def get_source_name(url: str, title: str = "") -> str:
         return title[:20] if title else "Source"
 
 
-# -------------------------
-# URL READER
-# -------------------------
+def get_youtube_video_id(url: str) -> str:
+    if "youtu.be/" in url:
+        return url.split("youtu.be/")[-1].split("?")[0].split("&")[0]
+
+    if "v=" in url:
+        return url.split("v=")[-1].split("&")[0]
+
+    match = re.search(r"embed/([^?&/]+)", url)
+    if match:
+        return match.group(1)
+
+    return ""
+
+def extract_youtube_transcript(url: str) -> Dict[str, Any]:
+    video_id = get_youtube_video_id(url)
+
+    if not video_id:
+        return {
+            "title": "YouTube Video",
+            "source_name": "YouTube",
+            "url": url,
+            "text": "Could not detect a valid YouTube video ID.",
+            "type": "video_error",
+        }
+
+    # Method 1: youtube-transcript-api
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+        text = " ".join([item["text"] for item in transcript])
+
+        if text.strip():
+            return {
+                "title": f"YouTube Video Transcript ({video_id})",
+                "source_name": "YouTube",
+                "url": url,
+                "text": text[:15000],
+                "type": "video",
+            }
+    except Exception:
+        pass
+
+    # Method 2: yt-dlp subtitle fallback
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["en", "en-US"],
+                "subtitlesformat": "vtt",
+                "outtmpl": output_template,
+                "quiet": True,
+                "no_warnings": True,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get("title", f"YouTube Video ({video_id})")
+
+            transcript_parts = []
+
+            for file_name in os.listdir(temp_dir):
+                if file_name.endswith(".vtt"):
+                    vtt_path = os.path.join(temp_dir, file_name)
+
+                    for caption in webvtt.read(vtt_path):
+                        caption_text = caption.text.replace("\n", " ").strip()
+                        if caption_text:
+                            transcript_parts.append(caption_text)
+
+            text = " ".join(transcript_parts)
+
+            if text.strip():
+                return {
+                    "title": title,
+                    "source_name": "YouTube",
+                    "url": url,
+                    "text": text[:15000],
+                    "type": "video",
+                }
+
+    except Exception as e:
+        return {
+            "title": "YouTube Video",
+            "source_name": "YouTube",
+            "url": url,
+            "text": (
+                "Could not fetch captions/transcript for this YouTube video. "
+                f"Technical detail: {str(e)}"
+            ),
+            "type": "video_error",
+        }
+
+    return {
+        "title": "YouTube Video",
+        "source_name": "YouTube",
+        "url": url,
+        "text": (
+            "No accessible captions or transcript were found for this video. "
+            "Try a YouTube video with English captions, or paste the transcript manually."
+        ),
+        "type": "video_error",
+    }
+
 def fetch_url_text(url: str) -> Dict[str, Any]:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -110,9 +204,6 @@ def fetch_url_text(url: str) -> Dict[str, Any]:
         }
 
 
-# -------------------------
-# PDF READER
-# -------------------------
 def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
     try:
         pdf_bytes = uploaded_pdf.read()
@@ -153,9 +244,6 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
         }
 
 
-# -------------------------
-# WEB SEARCH
-# -------------------------
 def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     client = get_tavily_client()
 
@@ -188,9 +276,6 @@ def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     return sources
 
 
-# -------------------------
-# PROMPT BUILDER
-# -------------------------
 def build_prompt(
     question: str,
     sources: List[Dict[str, Any]],
@@ -203,7 +288,7 @@ def build_prompt(
         source_blocks.append(
             f"""
 Source {i}
-Citation name to use in answer: [{src["source_name"]}]
+Source name: {src["source_name"]}
 Title: {src["title"]}
 URL: {src["url"]}
 Type: {src["type"]}
@@ -221,15 +306,13 @@ Content:
 You are Agent ARCA, a trustworthy AI research assistant.
 
 Your job:
-- Answer the user's question using only the provided sources.
-- Use short source citations exactly like [IBM], [WHO], [NCBI], [PMC], [Wikipedia], etc.
-- Do NOT include full URLs in the answer.
-- Do NOT use markdown links like [IBM](url).
-- Do NOT use long citations like [Source 1].
-- The app will make citations clickable later, so only write the short citation name in square brackets.
+- Answer the user's question using the provided sources.
+- Do not include citations inside the answer.
+- Do not include source names or URLs inside the answer body.
+- The app will show clickable sources separately below the answer.
 - If the sources do not contain enough evidence, say that clearly.
 - Be simple enough for non-technical users.
-- Do not invent citations or sources.
+- Do not invent facts.
 - Keep the answer structured and easy to read.
 
 User question:
@@ -247,12 +330,12 @@ Sources:
 Return this format:
 
 ## Answer
-Clear answer with short citations like [IBM].
+Clear answer.
 
 ## Key Points
-- Point 1 [SourceName]
-- Point 2 [SourceName]
-- Point 3 [SourceName]
+- Point 1
+- Point 2
+- Point 3
 
 ## Simple Summary
 Explain in very simple words.
@@ -265,9 +348,6 @@ Mention anything that was unclear or not available from the sources.
 """.strip()
 
 
-# -------------------------
-# EVALUATION
-# -------------------------
 def evaluate_answer(answer: str, source_count: int) -> Dict[str, float]:
     readability = min(1.0, len(answer) / 1500)
     coverage = min(1.0, source_count / 5)
@@ -280,9 +360,6 @@ def evaluate_answer(answer: str, source_count: int) -> Dict[str, float]:
     }
 
 
-# -------------------------
-# MAIN PIPELINE
-# -------------------------
 def run_pipeline(
     question: str,
     urls: List[str],
@@ -293,16 +370,17 @@ def run_pipeline(
 ) -> Dict[str, Any]:
     all_sources = []
 
-    # 1. Read user-provided URLs and PDFs
     if mode in ["Use my sources", "Use my sources + web search"]:
         for url in urls:
-            all_sources.append(fetch_url_text(url))
+            if "youtube.com" in url or "youtu.be" in url:
+                all_sources.append(extract_youtube_transcript(url))
+            else:
+                all_sources.append(fetch_url_text(url))
 
         if uploaded_pdfs:
             for pdf in uploaded_pdfs:
                 all_sources.append(extract_pdf_text(pdf))
 
-    # 2. Search web if requested OR if no source was provided
     should_search_web = (
         mode in ["Search the web", "Use my sources + web search"]
         or len(all_sources) == 0
@@ -312,7 +390,6 @@ def run_pipeline(
         web_sources = search_web(question)
         all_sources.extend(web_sources)
 
-    # 3. Generate answer
     model = get_gemini_model()
 
     prompt = build_prompt(
@@ -328,7 +405,6 @@ def run_pipeline(
     if not answer:
         answer = "I could not generate an answer from the available sources."
 
-    # 4. Save compact context for follow-up questions
     new_context = f"""
 Last question: {question}
 

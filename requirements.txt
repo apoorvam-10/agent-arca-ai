@@ -5,3 +5,6 @@ google-generativeai
 tavily-python
 PyMuPDF
 gTTS
+youtube-transcript-api
+yt-dlp
+webvtt-py
