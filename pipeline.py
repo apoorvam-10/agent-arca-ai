@@ -1,10 +1,9 @@
 from typing import List, Dict, Any
 import re
-
 import os
 import tempfile
-import webvtt
-import yt_dlp
+from io import BytesIO
+
 import fitz
 import requests
 import streamlit as st
@@ -12,6 +11,10 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 from tavily import TavilyClient
 from youtube_transcript_api import YouTubeTranscriptApi
+import webvtt
+import yt_dlp
+
+from docx import Document
 
 
 def get_gemini_model():
@@ -73,6 +76,7 @@ def get_youtube_video_id(url: str) -> str:
 
     return ""
 
+
 def extract_youtube_transcript(url: str) -> Dict[str, Any]:
     video_id = get_youtube_video_id(url)
 
@@ -85,7 +89,6 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
             "type": "video_error",
         }
 
-    # Method 1: youtube-transcript-api
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
         text = " ".join([item["text"] for item in transcript])
@@ -101,7 +104,6 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Method 2: yt-dlp subtitle fallback
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
@@ -165,6 +167,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
         ),
         "type": "video_error",
     }
+
 
 def fetch_url_text(url: str) -> Dict[str, Any]:
     try:
@@ -281,6 +284,8 @@ def build_prompt(
     sources: List[Dict[str, Any]],
     previous_context: str,
     chat_history: List[Any],
+    user_mode: str,
+    analysis_mode: str,
 ) -> str:
     source_blocks = []
 
@@ -302,31 +307,67 @@ Content:
     recent_chat = chat_history[-6:] if chat_history else []
     chat_text = "\n".join([f"{role}: {msg}" for role, msg in recent_chat])
 
-    return f"""
-You are Agent ARCA, a trustworthy AI research assistant.
+    if user_mode == "Student Mode":
+        mode_instruction = """
+You are operating in Student Mode.
 
-Your job:
-- Answer the user's question using the provided sources.
-- Do not include citations inside the answer.
-- Do not include source names or URLs inside the answer body.
-- The app will show clickable sources separately below the answer.
-- If the sources do not contain enough evidence, say that clearly.
-- Be simple enough for non-technical users.
-- Do not invent facts.
-- Keep the answer structured and easy to read.
+Your goals:
+- explain concepts clearly and simply
+- help users understand and retain information
+- simplify technical language
+- identify important concepts
+- focus on learning and understanding
+- provide beginner-friendly explanations
 
-User question:
-{question}
+At the end include:
+## Quiz
+Generate 3 short questions to test understanding.
 
-Previous research context:
-{previous_context if previous_context else "No previous context yet."}
+## Areas to Focus On
+Mention concepts the student should revise further.
+"""
+    else:
+        mode_instruction = """
+You are operating in General Mode.
 
-Recent conversation:
-{chat_text if chat_text else "No previous conversation."}
+Your goals:
+- provide professional research synthesis
+- focus on insights and decision-making
+- keep explanations concise and structured
+- highlight actionable findings
+- provide executive-style summaries
+"""
 
-Sources:
-{sources_text}
+    if analysis_mode == "Compare & Verify":
+        output_format = """
+Return this exact format:
 
+## Executive Answer
+Give the clearest answer to the user's question.
+
+## Agreements Across Sources
+List the main points that multiple sources agree on.
+
+## Conflicting Information
+List contradictions, disagreements, or differences between sources. If none are found, say so.
+
+## Strongest Evidence
+Explain which sources appear most useful or evidence-backed and why.
+
+## Weak or Missing Evidence
+Mention what is unclear, unsupported, missing, or not verified.
+
+## Final Consensus
+Give a balanced conclusion based on the sources.
+
+## Confidence Assessment
+Rate confidence as Low, Medium, or High and explain why.
+
+## Simple Summary
+Explain the conclusion in very simple words.
+"""
+    else:
+        output_format = """
 Return this format:
 
 ## Answer
@@ -345,6 +386,40 @@ Briefly say what was supported by the sources.
 
 ## Limits
 Mention anything that was unclear or not available from the sources.
+"""
+
+    return f"""
+You are Agent ARCA, a trustworthy AI research assistant.
+
+{mode_instruction}
+
+Analysis mode:
+{analysis_mode}
+
+Your job:
+- Answer the user's question using the provided sources.
+- Do not include citations inside the answer.
+- Do not include source names or URLs inside the answer body.
+- The app will show clickable sources separately below the answer.
+- If the sources do not contain enough evidence, say that clearly.
+- Be simple enough for non-technical users.
+- Do not invent facts.
+- Keep the answer structured and easy to read.
+- If Compare & Verify mode is active, compare sources against each other instead of only summarizing them.
+
+User question:
+{question}
+
+Previous research context:
+{previous_context if previous_context else "No previous context yet."}
+
+Recent conversation:
+{chat_text if chat_text else "No previous conversation."}
+
+Sources:
+{sources_text}
+
+{output_format}
 """.strip()
 
 
@@ -360,11 +435,90 @@ def evaluate_answer(answer: str, source_count: int) -> Dict[str, float]:
     }
 
 
+def evaluate_quiz_answers(original_answer: str, student_answers: str) -> str:
+    model = get_gemini_model()
+
+    prompt = f"""
+You are Agent ARCA in Student Mode.
+
+The student studied this material:
+
+{original_answer}
+
+The student answered the quiz like this:
+
+{student_answers}
+
+Evaluate the student's understanding.
+
+Return this format:
+
+## Score
+Give a score out of 10.
+
+## What You Got Right
+List strengths.
+
+## What Needs Improvement
+List weak areas.
+
+## Corrected Explanation
+Explain the missed concepts in simple words.
+
+## Suggested Revision Plan
+Give 3 focused revision steps.
+""".strip()
+
+    response = model.generate_content(prompt)
+    feedback = getattr(response, "text", "").strip()
+
+    if not feedback:
+        feedback = "I could not evaluate the quiz answers."
+
+    return feedback
+
+
+def generate_word_report(
+    question: str,
+    answer: str,
+    sources: List[Dict[str, Any]],
+    user_mode: str,
+):
+    doc = Document()
+
+    doc.add_heading("Agent ARCA Research Report", level=1)
+
+    doc.add_heading("Mode", level=2)
+    doc.add_paragraph(user_mode)
+
+    doc.add_heading("Research Question", level=2)
+    doc.add_paragraph(question)
+
+    doc.add_heading("Generated Findings", level=2)
+    doc.add_paragraph(answer)
+
+    doc.add_heading("Sources Used", level=2)
+
+    for i, src in enumerate(sources, start=1):
+        p = doc.add_paragraph(style="List Bullet")
+        p.add_run(f"{i}. {src['source_name']} — ").bold = True
+        p.add_run(src["title"])
+        p.add_run(f"\n{src['url']}")
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    return buffer
+
+
 def run_pipeline(
     question: str,
     urls: List[str],
     uploaded_pdfs,
     mode: str,
+    user_mode: str,
+    analysis_mode: str,
     previous_context: str = None,
     chat_history: List[Any] = None,
 ) -> Dict[str, Any]:
@@ -397,6 +551,8 @@ def run_pipeline(
         sources=all_sources,
         previous_context=previous_context or "",
         chat_history=chat_history or [],
+        user_mode=user_mode,
+        analysis_mode=analysis_mode,
     )
 
     response = model.generate_content(prompt)
@@ -407,6 +563,8 @@ def run_pipeline(
 
     new_context = f"""
 Last question: {question}
+
+Analysis mode: {analysis_mode}
 
 Last answer:
 {answer[:3000]}

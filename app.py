@@ -3,12 +3,18 @@ import tempfile
 
 import streamlit as st
 from gtts import gTTS
-from pipeline import run_pipeline
+import google.generativeai as genai
+
+from pipeline import (
+    run_pipeline,
+    evaluate_quiz_answers,
+    generate_word_report,
+)
 
 st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="wide")
 
 st.title("🤖 Agent ARCA")
-st.caption("AI research assistant for URLs, PDFs, and web research with source-backed answers.")
+st.caption("AI-powered multimodal research, learning, and decision-intelligence assistant.")
 
 
 def make_clickable_citations(answer, sources):
@@ -30,42 +36,52 @@ def make_clickable_citations(answer, sources):
     return answer
 
 
-def remove_section_titles(text):
-    text = re.sub(r"##\s*Answer", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"##\s*Key Points", "Key points:", text, flags=re.IGNORECASE)
-    text = re.sub(r"##\s*Simple Summary", "Simple summary:", text, flags=re.IGNORECASE)
-    text = re.sub(r"##\s*What I verified from sources", "What I verified:", text, flags=re.IGNORECASE)
-    text = re.sub(r"##\s*Limits", "Limits:", text, flags=re.IGNORECASE)
-    return text
+def clean_text_for_audio(text):
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]", r"\1", text)
+    text = text.replace("*", "")
+    text = text.replace("_", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:3500]
+
 
 def create_audio_file(text):
-    clean_text = remove_section_titles(text)
-
-    # Remove Markdown headings like ## Answer
-    clean_text = re.sub(r"#+\s*", "", clean_text)
-
-    # Remove citation brackets but keep source name readable
-    clean_text = re.sub(r"\[([^\]]+)\]", r" source: \1", clean_text)
-
-    # Remove Markdown links but keep only the readable label
-    clean_text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r" source: \1", clean_text)
-
-    # Remove bullets and extra symbols
-    clean_text = clean_text.replace("*", "")
-    clean_text = clean_text.replace("-", " ")
-    clean_text = clean_text.replace("_", " ")
-
-    # Make spacing cleaner
-    clean_text = re.sub(r"\s+", " ", clean_text).strip()
-
-    # Optional: shorten very long audio
-    clean_text = clean_text[:3500]
-
+    clean_text = clean_text_for_audio(text)
     tts = gTTS(clean_text)
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     tts.save(temp_file.name)
-
     return temp_file.name
+
+
+def transcribe_voice(audio_input):
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
+
+        if not api_key:
+            return ""
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-3-flash-preview")
+
+        audio_bytes = audio_input.read()
+
+        response = model.generate_content(
+            [
+                "Only transcribe the spoken words. Do not answer or explain.",
+                {
+                    "mime_type": "audio/wav",
+                    "data": audio_bytes,
+                },
+            ]
+        )
+
+        return response.text.strip()
+
+    except Exception as e:
+        st.warning(f"Voice transcription failed: {e}")
+        return ""
 
 
 if "chat_history" not in st.session_state:
@@ -74,11 +90,59 @@ if "chat_history" not in st.session_state:
 if "research_context" not in st.session_state:
     st.session_state.research_context = None
 
+if "latest_student_answer" not in st.session_state:
+    st.session_state.latest_student_answer = ""
+
+if "latest_quiz_feedback" not in st.session_state:
+    st.session_state.latest_quiz_feedback = ""
+
+if "latest_sources" not in st.session_state:
+    st.session_state.latest_sources = []
+
+if "latest_question" not in st.session_state:
+    st.session_state.latest_question = ""
+
+
 with st.sidebar:
+    st.header("Mode")
+
+    user_mode = st.radio(
+        "Choose Experience",
+        [
+            "Student Mode",
+            "General Mode",
+        ],
+    )
+
+    if user_mode == "Student Mode":
+        st.success("🎓 Student Mode Active")
+        st.caption("Summaries, quizzes, learning guidance, and understanding evaluation.")
+    else:
+        st.info("💼 General Mode Active")
+        st.caption("Professional research synthesis, insights, and decision intelligence.")
+
+    st.divider()
+
+    st.header("Research Workflow")
+
+    analysis_mode = st.radio(
+        "Choose analysis type",
+        [
+            "Standard Research",
+            "Compare & Verify",
+        ],
+    )
+
+    if analysis_mode == "Compare & Verify":
+        st.warning("🔍 Compare & Verify Mode Active")
+        st.caption("Best when using multiple sources, PDFs, URLs, videos, or web results.")
+
+    st.divider()
+
     st.header("Research Sources")
 
-    mode = st.radio(
-        "Choose mode",
+    source_mode = st.radio(
+        "Choose source mode",
         [
             "Use my sources",
             "Search the web",
@@ -87,8 +151,8 @@ with st.sidebar:
     )
 
     urls_input = st.text_area(
-        "Paste URLs, one per line",
-        placeholder="https://example.com/article\nhttps://example.com/paper",
+        "Paste URLs or YouTube links",
+        placeholder="https://example.com/article\nhttps://youtube.com/watch?v=...",
     )
 
     uploaded_pdfs = st.file_uploader(
@@ -102,15 +166,35 @@ with st.sidebar:
     if st.button("Clear Chat"):
         st.session_state.chat_history = []
         st.session_state.research_context = None
+        st.session_state.latest_student_answer = ""
+        st.session_state.latest_quiz_feedback = ""
+        st.session_state.latest_sources = []
+        st.session_state.latest_question = ""
         st.rerun()
 
 
-question = st.chat_input("Ask a research question...")
+audio_input = st.audio_input("🎤 Ask using voice")
 
-for index, item in enumerate(st.session_state.chat_history):
+voice_question = ""
+
+if audio_input:
+    voice_question = transcribe_voice(audio_input)
+
+    if voice_question:
+        st.info(f"🗣️ You said: {voice_question}")
+
+
+question = st.chat_input("Ask a research or learning question...")
+
+if voice_question:
+    question = voice_question
+
+
+for item in st.session_state.chat_history:
     role = item["role"]
     message = item["message"]
     raw_answer = item.get("raw_answer", message)
+    sources = item.get("sources", [])
 
     with st.chat_message(role):
         if role == "assistant":
@@ -119,6 +203,12 @@ for index, item in enumerate(st.session_state.chat_history):
             audio_file = create_audio_file(raw_answer)
             st.audio(audio_file, format="audio/mp3")
 
+            if sources:
+                st.markdown("### Sources used")
+                for i, src in enumerate(sources, start=1):
+                    st.markdown(
+                        f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
+                    )
         else:
             st.markdown(message)
 
@@ -142,10 +232,15 @@ if question:
                 question=question,
                 urls=urls,
                 uploaded_pdfs=uploaded_pdfs,
-                mode=mode,
+                mode=source_mode,
+                user_mode=user_mode,
+                analysis_mode=analysis_mode,
                 previous_context=st.session_state.research_context,
                 chat_history=[
-                    (item["role"], item["message"])
+                    (
+                        item["role"],
+                        item["message"],
+                    )
                     for item in st.session_state.chat_history
                 ],
             )
@@ -153,7 +248,18 @@ if question:
         st.session_state.research_context = result["context"]
 
         answer = result["answer"]
-        clickable_answer = make_clickable_citations(answer, result["sources"])
+
+        clickable_answer = make_clickable_citations(
+            answer,
+            result["sources"],
+        )
+
+        if analysis_mode == "Compare & Verify":
+            st.markdown("### 🔍 Compare & Verify Response")
+        elif user_mode == "Student Mode":
+            st.markdown("### 🎓 Student Learning Response")
+        else:
+            st.markdown("### 💼 Research Intelligence Response")
 
         st.markdown(clickable_answer, unsafe_allow_html=True)
 
@@ -161,17 +267,73 @@ if question:
         st.audio(audio_file, format="audio/mp3")
 
         if result["sources"]:
-            st.divider()
             st.markdown("### Sources used")
             for i, src in enumerate(result["sources"], start=1):
                 st.markdown(
                     f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
                 )
 
+        st.session_state.latest_student_answer = answer
+        st.session_state.latest_sources = result["sources"]
+        st.session_state.latest_question = question
+
     st.session_state.chat_history.append(
         {
             "role": "assistant",
             "message": clickable_answer,
             "raw_answer": answer,
+            "sources": result["sources"],
         }
+    )
+
+
+if user_mode == "Student Mode" and st.session_state.latest_student_answer:
+    st.divider()
+
+    st.subheader("📝 Test Your Understanding")
+
+    st.caption("Answer the quiz questions generated above to evaluate your understanding.")
+
+    student_answers = st.text_area(
+        "Write your quiz answers here",
+        placeholder="1. ...\n2. ...\n3. ...",
+        height=180,
+    )
+
+    if st.button("Evaluate My Understanding"):
+        if not student_answers.strip():
+            st.warning("Please write your answers first.")
+        else:
+            with st.spinner("Evaluating your understanding..."):
+                feedback = evaluate_quiz_answers(
+                    original_answer=st.session_state.latest_student_answer,
+                    student_answers=student_answers,
+                )
+
+            st.session_state.latest_quiz_feedback = feedback
+
+    if st.session_state.latest_quiz_feedback:
+        st.markdown("### 📊 Quiz Feedback")
+        st.markdown(st.session_state.latest_quiz_feedback)
+
+
+if st.session_state.latest_student_answer:
+    st.divider()
+
+    st.subheader("📄 Download Research Report")
+
+    st.caption("Generate a downloadable Word document from your research and findings.")
+
+    report_file = generate_word_report(
+        question=st.session_state.latest_question,
+        answer=st.session_state.latest_student_answer,
+        sources=st.session_state.latest_sources,
+        user_mode=user_mode,
+    )
+
+    st.download_button(
+        label="⬇️ Download Word Report",
+        data=report_file,
+        file_name="ARCA_Research_Report.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
