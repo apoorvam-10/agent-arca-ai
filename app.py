@@ -1,5 +1,6 @@
 import re
 import tempfile
+from collections import Counter
 
 import streamlit as st
 from gtts import gTTS
@@ -84,6 +85,39 @@ def transcribe_voice(audio_input):
         return ""
 
 
+def show_research_dashboard(answer, sources, user_mode, analysis_mode):
+    st.divider()
+    st.subheader("📊 Research Dashboard")
+
+    source_count = len(sources)
+    word_count = len(answer.split()) if answer else 0
+    source_types = Counter([src.get("type", "unknown") for src in sources])
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Sources Used", source_count)
+    col2.metric("Answer Length", f"{word_count} words")
+    col3.metric("Mode", user_mode.replace(" Mode", ""))
+    col4.metric("Analysis", analysis_mode)
+
+    st.markdown("### Source Breakdown")
+
+    if source_types:
+        for source_type, count in source_types.items():
+            st.write(f"- **{source_type}**: {count}")
+    else:
+        st.write("No sources available.")
+
+    st.markdown("### Quick Interpretation")
+
+    if source_count >= 4:
+        st.success("Strong source coverage for this response.")
+    elif source_count >= 2:
+        st.info("Moderate source coverage. Add more sources for stronger comparison.")
+    else:
+        st.warning("Limited source coverage. Add more PDFs, URLs, or web search for better verification.")
+
+
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -101,6 +135,12 @@ if "latest_sources" not in st.session_state:
 
 if "latest_question" not in st.session_state:
     st.session_state.latest_question = ""
+
+if "latest_user_mode" not in st.session_state:
+    st.session_state.latest_user_mode = ""
+
+if "latest_analysis_mode" not in st.session_state:
+    st.session_state.latest_analysis_mode = ""
 
 
 with st.sidebar:
@@ -135,7 +175,7 @@ with st.sidebar:
 
     if analysis_mode == "Compare & Verify":
         st.warning("🔍 Compare & Verify Mode Active")
-        st.caption("Best when using multiple sources, PDFs, URLs, videos, or web results.")
+        st.caption("Best for comparing multiple PDFs, URLs, videos, or web results.")
 
     st.divider()
 
@@ -170,6 +210,8 @@ with st.sidebar:
         st.session_state.latest_quiz_feedback = ""
         st.session_state.latest_sources = []
         st.session_state.latest_question = ""
+        st.session_state.latest_user_mode = ""
+        st.session_state.latest_analysis_mode = ""
         st.rerun()
 
 
@@ -276,6 +318,8 @@ if question:
         st.session_state.latest_student_answer = answer
         st.session_state.latest_sources = result["sources"]
         st.session_state.latest_question = question
+        st.session_state.latest_user_mode = user_mode
+        st.session_state.latest_analysis_mode = analysis_mode
 
     st.session_state.chat_history.append(
         {
@@ -284,6 +328,15 @@ if question:
             "raw_answer": answer,
             "sources": result["sources"],
         }
+    )
+
+
+if st.session_state.latest_student_answer:
+    show_research_dashboard(
+        answer=st.session_state.latest_student_answer,
+        sources=st.session_state.latest_sources,
+        user_mode=st.session_state.latest_user_mode,
+        analysis_mode=st.session_state.latest_analysis_mode,
     )
 
 
@@ -328,7 +381,7 @@ if st.session_state.latest_student_answer:
         question=st.session_state.latest_question,
         answer=st.session_state.latest_student_answer,
         sources=st.session_state.latest_sources,
-        user_mode=user_mode,
+        user_mode=st.session_state.latest_user_mode,
     )
 
     st.download_button(
