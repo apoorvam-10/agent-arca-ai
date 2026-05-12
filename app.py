@@ -10,6 +10,7 @@ from pipeline import (
     run_pipeline,
     evaluate_quiz_answers,
     generate_word_report,
+    generate_powerpoint_deck,
 )
 
 st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="wide")
@@ -45,15 +46,23 @@ def clean_text_for_audio(text):
     text = text.replace("*", "")
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:3500]
+    return text[:2500]
 
 
 def create_audio_file(text):
-    clean_text = clean_text_for_audio(text)
-    tts = gTTS(clean_text)
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tts.save(temp_file.name)
-    return temp_file.name
+    try:
+        clean_text = clean_text_for_audio(text)
+
+        if not clean_text:
+            return None
+
+        tts = gTTS(clean_text)
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        tts.save(temp_file.name)
+        return temp_file.name
+
+    except Exception:
+        return None
 
 
 def transcribe_voice(audio_input):
@@ -81,7 +90,14 @@ def transcribe_voice(audio_input):
         return response.text.strip()
 
     except Exception as e:
-        st.warning(f"Voice transcription failed: {e}")
+        error_text = str(e)
+
+        if "429" in error_text or "quota" in error_text.lower() or "ResourceExhausted" in error_text:
+            st.warning("Gemini voice quota reached. Please type your question or wait 1–2 minutes.")
+
+        else:
+            st.warning("Voice transcription failed. Please type your question instead.")
+
         return ""
 
 
@@ -242,8 +258,11 @@ for item in st.session_state.chat_history:
         if role == "assistant":
             st.markdown(message, unsafe_allow_html=True)
 
-            audio_file = create_audio_file(raw_answer)
-            st.audio(audio_file, format="audio/mp3")
+            if not raw_answer.startswith("⚠️ Gemini API quota"):
+                audio_file = create_audio_file(raw_answer)
+
+                if audio_file:
+                    st.audio(audio_file, format="audio/mp3")
 
             if sources:
                 st.markdown("### Sources used")
@@ -305,8 +324,11 @@ if question:
 
         st.markdown(clickable_answer, unsafe_allow_html=True)
 
-        audio_file = create_audio_file(answer)
-        st.audio(audio_file, format="audio/mp3")
+        if not answer.startswith("⚠️ Gemini API quota"):
+            audio_file = create_audio_file(answer)
+
+            if audio_file:
+                st.audio(audio_file, format="audio/mp3")
 
         if result["sources"]:
             st.markdown("### Sources used")
@@ -373,20 +395,40 @@ if user_mode == "Student Mode" and st.session_state.latest_student_answer:
 if st.session_state.latest_student_answer:
     st.divider()
 
-    st.subheader("📄 Download Research Report")
+    st.subheader("📄 Export Research Outputs")
 
-    st.caption("Generate a downloadable Word document from your research and findings.")
+    st.caption("Download your research as a Word report or PowerPoint deck.")
 
-    report_file = generate_word_report(
-        question=st.session_state.latest_question,
-        answer=st.session_state.latest_student_answer,
-        sources=st.session_state.latest_sources,
-        user_mode=st.session_state.latest_user_mode,
-    )
+    col1, col2 = st.columns(2)
 
-    st.download_button(
-        label="⬇️ Download Word Report",
-        data=report_file,
-        file_name="ARCA_Research_Report.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
+    with col1:
+        report_file = generate_word_report(
+            question=st.session_state.latest_question,
+            answer=st.session_state.latest_student_answer,
+            sources=st.session_state.latest_sources,
+            user_mode=st.session_state.latest_user_mode,
+        )
+
+        st.download_button(
+            label="⬇️ Download Word Report",
+            data=report_file,
+            file_name="ARCA_Research_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+
+    with col2:
+        ppt_file = generate_powerpoint_deck(
+            question=st.session_state.latest_question,
+            answer=st.session_state.latest_student_answer,
+            sources=st.session_state.latest_sources,
+            user_mode=st.session_state.latest_user_mode,
+        )
+
+        st.download_button(
+            label="⬇️ Download PowerPoint Deck",
+            data=ppt_file,
+            file_name="ARCA_Research_Deck.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
