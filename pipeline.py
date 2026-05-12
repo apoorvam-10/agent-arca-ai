@@ -454,6 +454,9 @@ Your goals:
         output_format = """
 Return this exact format:
 
+## Key Takeaway
+Give one clear sentence that captures the final conclusion.
+
 ## Executive Answer
 Give the clearest answer to the user's question.
 
@@ -477,10 +480,19 @@ Rate confidence as Low, Medium, or High and explain why.
 
 ## Simple Summary
 Explain the conclusion in very simple words.
+
+## Suggested Follow-Up Questions
+Give 3 useful follow-up questions the user can ask next.
+
+## Recommended Next Steps
+Give 3 practical next steps based on the findings.
 """
     else:
         output_format = """
 Return this format:
+
+## Key Takeaway
+Give one clear sentence that captures the most important finding.
 
 ## Answer
 Clear answer.
@@ -498,6 +510,12 @@ Briefly say what was supported by the sources.
 
 ## Limits
 Mention anything that was unclear or not available from the sources.
+
+## Suggested Follow-Up Questions
+Give 3 useful follow-up questions the user can ask next.
+
+## Recommended Next Steps
+Give 3 practical next steps based on the answer.
 """
 
     return f"""
