@@ -15,6 +15,7 @@ import webvtt
 import yt_dlp
 
 from docx import Document
+from pptx import Presentation
 
 
 def get_gemini_model():
@@ -24,6 +25,29 @@ def get_gemini_model():
 
     genai.configure(api_key=api_key)
     return genai.GenerativeModel("gemini-3-flash-preview")
+
+
+def safe_generate_content(prompt: str) -> str:
+    try:
+        model = get_gemini_model()
+        response = model.generate_content(prompt)
+        text = getattr(response, "text", "").strip()
+
+        if not text:
+            return "I could not generate a response from the available information."
+
+        return text
+
+    except Exception as e:
+        error_text = str(e)
+
+        if "429" in error_text or "ResourceExhausted" in error_text or "quota" in error_text.lower():
+            return (
+                "⚠️ Gemini API quota limit reached. Please wait 1–2 minutes and try again. "
+                "This usually happens on the free tier after several requests."
+            )
+
+        return f"⚠️ AI generation failed. Please try again. Technical detail: {error_text[:300]}"
 
 
 def get_tavily_client():
@@ -247,6 +271,42 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
         }
 
 
+def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
+    try:
+        doc = Document(uploaded_docx)
+
+        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+        text = "\n".join(paragraphs)
+
+        title = uploaded_docx.name
+        source_name = (
+            title.replace(".docx", "")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()[:25]
+        )
+
+        if not source_name:
+            source_name = "DOCX"
+
+        return {
+            "title": title,
+            "source_name": source_name,
+            "url": title,
+            "text": text[:15000],
+            "type": "docx",
+        }
+
+    except Exception as e:
+        return {
+            "title": uploaded_docx.name,
+            "source_name": "DOCX",
+            "url": uploaded_docx.name,
+            "text": f"Error reading DOCX: {str(e)}",
+            "type": "docx_error",
+        }
+
+
 def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     client = get_tavily_client()
 
@@ -436,8 +496,6 @@ def evaluate_answer(answer: str, source_count: int) -> Dict[str, float]:
 
 
 def evaluate_quiz_answers(original_answer: str, student_answers: str) -> str:
-    model = get_gemini_model()
-
     prompt = f"""
 You are Agent ARCA in Student Mode.
 
@@ -469,13 +527,7 @@ Explain the missed concepts in simple words.
 Give 3 focused revision steps.
 """.strip()
 
-    response = model.generate_content(prompt)
-    feedback = getattr(response, "text", "").strip()
-
-    if not feedback:
-        feedback = "I could not evaluate the quiz answers."
-
-    return feedback
+    return safe_generate_content(prompt)
 
 
 def generate_word_report(
@@ -512,10 +564,85 @@ def generate_word_report(
     return buffer
 
 
+def generate_powerpoint_deck(
+    question: str,
+    answer: str,
+    sources: List[Dict[str, Any]],
+    user_mode: str,
+):
+    prs = Presentation()
+
+    title_slide_layout = prs.slide_layouts[0]
+    content_slide_layout = prs.slide_layouts[1]
+
+    slide = prs.slides.add_slide(title_slide_layout)
+    slide.shapes.title.text = "Agent ARCA Research Deck"
+    slide.placeholders[1].text = f"Mode: {user_mode}\nQuestion: {question}"
+
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Research Question"
+    slide.placeholders[1].text = question
+
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Key Findings"
+
+    clean_answer = re.sub(r"#+\s*", "", answer)
+    clean_answer = clean_answer.replace("*", "")
+    lines = [line.strip() for line in clean_answer.split("\n") if line.strip()]
+    summary_lines = lines[:8] if lines else ["No findings available."]
+
+    slide.placeholders[1].text = "\n".join(summary_lines)
+
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Simple Summary"
+
+    simple_summary = []
+    capture = False
+
+    for line in lines:
+        if "Simple Summary" in line:
+            capture = True
+            continue
+        if capture and line.startswith("##"):
+            break
+        if capture:
+            simple_summary.append(line)
+
+    if not simple_summary:
+        simple_summary = summary_lines[:4]
+
+    slide.placeholders[1].text = "\n".join(simple_summary[:6])
+
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Sources Used"
+
+    source_lines = []
+    for i, src in enumerate(sources, start=1):
+        source_lines.append(f"{i}. {src['source_name']} — {src['title']}")
+
+    slide.placeholders[1].text = "\n".join(source_lines[:10]) if source_lines else "No sources available."
+
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Next Steps"
+    slide.placeholders[1].text = (
+        "1. Review the generated findings.\n"
+        "2. Check the sources for deeper reading.\n"
+        "3. Ask ARCA follow-up questions.\n"
+        "4. Export the report or continue comparison research."
+    )
+
+    buffer = BytesIO()
+    prs.save(buffer)
+    buffer.seek(0)
+
+    return buffer
+
+
 def run_pipeline(
     question: str,
     urls: List[str],
     uploaded_pdfs,
+    uploaded_docs,
     mode: str,
     user_mode: str,
     analysis_mode: str,
@@ -535,6 +662,10 @@ def run_pipeline(
             for pdf in uploaded_pdfs:
                 all_sources.append(extract_pdf_text(pdf))
 
+        if uploaded_docs:
+            for docx in uploaded_docs:
+                all_sources.append(extract_docx_text(docx))
+
     should_search_web = (
         mode in ["Search the web", "Use my sources + web search"]
         or len(all_sources) == 0
@@ -543,8 +674,6 @@ def run_pipeline(
     if should_search_web:
         web_sources = search_web(question)
         all_sources.extend(web_sources)
-
-    model = get_gemini_model()
 
     prompt = build_prompt(
         question=question,
@@ -555,11 +684,7 @@ def run_pipeline(
         analysis_mode=analysis_mode,
     )
 
-    response = model.generate_content(prompt)
-    answer = getattr(response, "text", "").strip()
-
-    if not answer:
-        answer = "I could not generate an answer from the available sources."
+    answer = safe_generate_content(prompt)
 
     new_context = f"""
 Last question: {question}

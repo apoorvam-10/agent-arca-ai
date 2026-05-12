@@ -94,7 +94,6 @@ def transcribe_voice(audio_input):
 
         if "429" in error_text or "quota" in error_text.lower() or "ResourceExhausted" in error_text:
             st.warning("Gemini voice quota reached. Please type your question or wait 1–2 minutes.")
-
         else:
             st.warning("Voice transcription failed. Please type your question instead.")
 
@@ -131,7 +130,7 @@ def show_research_dashboard(answer, sources, user_mode, analysis_mode):
     elif source_count >= 2:
         st.info("Moderate source coverage. Add more sources for stronger comparison.")
     else:
-        st.warning("Limited source coverage. Add more PDFs, URLs, or web search for better verification.")
+        st.warning("Limited source coverage. Add more PDFs, Word docs, URLs, or web search for better verification.")
 
 
 if "chat_history" not in st.session_state:
@@ -191,7 +190,7 @@ with st.sidebar:
 
     if analysis_mode == "Compare & Verify":
         st.warning("🔍 Compare & Verify Mode Active")
-        st.caption("Best for comparing multiple PDFs, URLs, videos, or web results.")
+        st.caption("Best for comparing multiple PDFs, Word docs, URLs, videos, or web results.")
 
     st.divider()
 
@@ -214,6 +213,12 @@ with st.sidebar:
     uploaded_pdfs = st.file_uploader(
         "Upload PDF files",
         type=["pdf"],
+        accept_multiple_files=True,
+    )
+
+    uploaded_docs = st.file_uploader(
+        "Upload Word documents",
+        type=["docx"],
         accept_multiple_files=True,
     )
 
@@ -293,6 +298,7 @@ if question:
                 question=question,
                 urls=urls,
                 uploaded_pdfs=uploaded_pdfs,
+                uploaded_docs=uploaded_docs,
                 mode=source_mode,
                 user_mode=user_mode,
                 analysis_mode=analysis_mode,
