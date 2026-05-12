@@ -11,6 +11,7 @@ from pipeline import (
     evaluate_quiz_answers,
     generate_word_report,
     generate_powerpoint_deck,
+    generate_pdf_report,
 )
 
 st.set_page_config(page_title="Agent ARCA", page_icon="🤖", layout="wide")
@@ -46,6 +47,7 @@ def clean_text_for_audio(text):
     text = text.replace("*", "")
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text).strip()
+
     return text[:2500]
 
 
@@ -57,8 +59,14 @@ def create_audio_file(text):
             return None
 
         tts = gTTS(clean_text)
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".mp3"
+        )
+
         tts.save(temp_file.name)
+
         return temp_file.name
 
     except Exception:
@@ -73,7 +81,10 @@ def transcribe_voice(audio_input):
             return ""
 
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+
+        model = genai.GenerativeModel(
+            "gemini-3-flash-preview"
+        )
 
         audio_bytes = audio_input.read()
 
@@ -92,21 +103,38 @@ def transcribe_voice(audio_input):
     except Exception as e:
         error_text = str(e)
 
-        if "429" in error_text or "quota" in error_text.lower() or "ResourceExhausted" in error_text:
-            st.warning("Gemini voice quota reached. Please type your question or wait 1–2 minutes.")
+        if (
+            "429" in error_text
+            or "quota" in error_text.lower()
+            or "ResourceExhausted" in error_text
+        ):
+            st.warning(
+                "Gemini voice quota reached. Please type your question or wait 1–2 minutes."
+            )
         else:
-            st.warning("Voice transcription failed. Please type your question instead.")
+            st.warning(
+                "Voice transcription failed. Please type your question instead."
+            )
 
         return ""
 
 
-def show_research_dashboard(answer, sources, user_mode, analysis_mode):
+def show_research_dashboard(
+    answer,
+    sources,
+    user_mode,
+    analysis_mode,
+):
     st.divider()
+
     st.subheader("📊 Research Dashboard")
 
     source_count = len(sources)
     word_count = len(answer.split()) if answer else 0
-    source_types = Counter([src.get("type", "unknown") for src in sources])
+
+    source_types = Counter(
+        [src.get("type", "unknown") for src in sources]
+    )
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -126,11 +154,17 @@ def show_research_dashboard(answer, sources, user_mode, analysis_mode):
     st.markdown("### Quick Interpretation")
 
     if source_count >= 4:
-        st.success("Strong source coverage for this response.")
+        st.success(
+            "Strong source coverage for this response."
+        )
     elif source_count >= 2:
-        st.info("Moderate source coverage. Add more sources for stronger comparison.")
+        st.info(
+            "Moderate source coverage. Add more sources for stronger comparison."
+        )
     else:
-        st.warning("Limited source coverage. Add more PDFs, Word docs, images, URLs, or web search for better verification.")
+        st.warning(
+            "Limited source coverage. Add more PDFs, Word docs, images, URLs, or web search."
+        )
 
 
 if "chat_history" not in st.session_state:
@@ -171,10 +205,14 @@ with st.sidebar:
 
     if user_mode == "Student Mode":
         st.success("🎓 Student Mode Active")
-        st.caption("Summaries, quizzes, learning guidance, and understanding evaluation.")
+        st.caption(
+            "Summaries, quizzes, learning guidance, and understanding evaluation."
+        )
     else:
         st.info("💼 General Mode Active")
-        st.caption("Professional research synthesis, insights, and decision intelligence.")
+        st.caption(
+            "Professional research synthesis and decision intelligence."
+        )
 
     st.divider()
 
@@ -190,7 +228,9 @@ with st.sidebar:
 
     if analysis_mode == "Compare & Verify":
         st.warning("🔍 Compare & Verify Mode Active")
-        st.caption("Best for comparing multiple PDFs, Word docs, images, URLs, videos, or web results.")
+        st.caption(
+            "Best for comparing PDFs, docs, videos, images, and web results."
+        )
 
     st.divider()
 
@@ -223,7 +263,7 @@ with st.sidebar:
     )
 
     uploaded_images = st.file_uploader(
-        "Upload images or screenshots",
+        "Upload images/screenshots",
         type=["png", "jpg", "jpeg"],
         accept_multiple_files=True,
     )
@@ -239,6 +279,7 @@ with st.sidebar:
         st.session_state.latest_question = ""
         st.session_state.latest_user_mode = ""
         st.session_state.latest_analysis_mode = ""
+
         st.rerun()
 
 
@@ -253,7 +294,9 @@ if audio_input:
         st.info(f"🗣️ You said: {voice_question}")
 
 
-question = st.chat_input("Ask a research or learning question...")
+question = st.chat_input(
+    "Ask a research or learning question..."
+)
 
 if voice_question:
     question = voice_question
@@ -267,20 +310,35 @@ for item in st.session_state.chat_history:
 
     with st.chat_message(role):
         if role == "assistant":
-            st.markdown(message, unsafe_allow_html=True)
+            st.markdown(
+                message,
+                unsafe_allow_html=True,
+            )
 
-            if not raw_answer.startswith("⚠️ Gemini API quota"):
-                audio_file = create_audio_file(raw_answer)
+            if not raw_answer.startswith(
+                "⚠️ Gemini API quota"
+            ):
+                audio_file = create_audio_file(
+                    raw_answer
+                )
 
                 if audio_file:
-                    st.audio(audio_file, format="audio/mp3")
+                    st.audio(
+                        audio_file,
+                        format="audio/mp3",
+                    )
 
             if sources:
                 st.markdown("### Sources used")
-                for i, src in enumerate(sources, start=1):
+
+                for i, src in enumerate(
+                    sources,
+                    start=1,
+                ):
                     st.markdown(
                         f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
                     )
+
         else:
             st.markdown(message)
 
@@ -296,7 +354,11 @@ if question:
     with st.chat_message("user"):
         st.markdown(question)
 
-    urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
+    urls = [
+        u.strip()
+        for u in urls_input.split("\n")
+        if u.strip()
+    ]
 
     with st.chat_message("assistant"):
         with st.spinner("ARCA is researching..."):
@@ -319,7 +381,9 @@ if question:
                 ],
             )
 
-        st.session_state.research_context = result["context"]
+        st.session_state.research_context = (
+            result["context"]
+        )
 
         answer = result["answer"]
 
@@ -329,32 +393,62 @@ if question:
         )
 
         if analysis_mode == "Compare & Verify":
-            st.markdown("### 🔍 Compare & Verify Response")
+            st.markdown(
+                "### 🔍 Compare & Verify Response"
+            )
         elif user_mode == "Student Mode":
-            st.markdown("### 🎓 Student Learning Response")
+            st.markdown(
+                "### 🎓 Student Learning Response"
+            )
         else:
-            st.markdown("### 💼 Research Intelligence Response")
+            st.markdown(
+                "### 💼 Research Intelligence Response"
+            )
 
-        st.markdown(clickable_answer, unsafe_allow_html=True)
+        st.markdown(
+            clickable_answer,
+            unsafe_allow_html=True,
+        )
 
-        if not answer.startswith("⚠️ Gemini API quota"):
+        if not answer.startswith(
+            "⚠️ Gemini API quota"
+        ):
             audio_file = create_audio_file(answer)
 
             if audio_file:
-                st.audio(audio_file, format="audio/mp3")
+                st.audio(
+                    audio_file,
+                    format="audio/mp3",
+                )
 
         if result["sources"]:
             st.markdown("### Sources used")
-            for i, src in enumerate(result["sources"], start=1):
+
+            for i, src in enumerate(
+                result["sources"],
+                start=1,
+            ):
                 st.markdown(
                     f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
                 )
 
-        st.session_state.latest_student_answer = answer
-        st.session_state.latest_sources = result["sources"]
+        st.session_state.latest_student_answer = (
+            answer
+        )
+
+        st.session_state.latest_sources = (
+            result["sources"]
+        )
+
         st.session_state.latest_question = question
-        st.session_state.latest_user_mode = user_mode
-        st.session_state.latest_analysis_mode = analysis_mode
+
+        st.session_state.latest_user_mode = (
+            user_mode
+        )
+
+        st.session_state.latest_analysis_mode = (
+            analysis_mode
+        )
 
     st.session_state.chat_history.append(
         {
@@ -375,12 +469,17 @@ if st.session_state.latest_student_answer:
     )
 
 
-if user_mode == "Student Mode" and st.session_state.latest_student_answer:
+if (
+    user_mode == "Student Mode"
+    and st.session_state.latest_student_answer
+):
     st.divider()
 
     st.subheader("📝 Test Your Understanding")
 
-    st.caption("Answer the quiz questions generated above to evaluate your understanding.")
+    st.caption(
+        "Answer the quiz questions generated above to evaluate your understanding."
+    )
 
     student_answers = st.text_area(
         "Write your quiz answers here",
@@ -390,19 +489,28 @@ if user_mode == "Student Mode" and st.session_state.latest_student_answer:
 
     if st.button("Evaluate My Understanding"):
         if not student_answers.strip():
-            st.warning("Please write your answers first.")
+            st.warning(
+                "Please write your answers first."
+            )
         else:
-            with st.spinner("Evaluating your understanding..."):
+            with st.spinner(
+                "Evaluating your understanding..."
+            ):
                 feedback = evaluate_quiz_answers(
                     original_answer=st.session_state.latest_student_answer,
                     student_answers=student_answers,
                 )
 
-            st.session_state.latest_quiz_feedback = feedback
+            st.session_state.latest_quiz_feedback = (
+                feedback
+            )
 
     if st.session_state.latest_quiz_feedback:
         st.markdown("### 📊 Quiz Feedback")
-        st.markdown(st.session_state.latest_quiz_feedback)
+
+        st.markdown(
+            st.session_state.latest_quiz_feedback
+        )
 
 
 if st.session_state.latest_student_answer:
@@ -410,9 +518,11 @@ if st.session_state.latest_student_answer:
 
     st.subheader("📄 Export Research Outputs")
 
-    st.caption("Download a professional Word report or PowerPoint deck from your ARCA findings.")
+    st.caption(
+        "Download professional reports and presentation decks from ARCA findings."
+    )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         report_file = generate_word_report(
@@ -425,7 +535,7 @@ if st.session_state.latest_student_answer:
         )
 
         st.download_button(
-            label="⬇️ Download Professional Word Report",
+            label="⬇️ Download Word Report",
             data=report_file,
             file_name="ARCA_Research_Report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -443,9 +553,27 @@ if st.session_state.latest_student_answer:
         )
 
         st.download_button(
-            label="⬇️ Download Professional PowerPoint Deck",
+            label="⬇️ Download PowerPoint Deck",
             data=ppt_file,
             file_name="ARCA_Research_Deck.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
+
+    with col3:
+        pdf_file = generate_pdf_report(
+            question=st.session_state.latest_question,
+            answer=st.session_state.latest_student_answer,
+            sources=st.session_state.latest_sources,
+            user_mode=st.session_state.latest_user_mode,
+            analysis_mode=st.session_state.latest_analysis_mode,
+            quiz_feedback=st.session_state.latest_quiz_feedback,
+        )
+
+        st.download_button(
+            label="⬇️ Download PDF Report",
+            data=pdf_file,
+            file_name="ARCA_Research_Report.pdf",
+            mime="application/pdf",
             use_container_width=True,
         )
