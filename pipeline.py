@@ -65,10 +65,7 @@ def safe_generate_multimodal_content(parts: list) -> str:
         error_text = str(e)
 
         if "429" in error_text or "ResourceExhausted" in error_text or "quota" in error_text.lower():
-            return (
-                "Gemini quota reached while reading image. "
-                "Please wait 1–2 minutes and try again."
-            )
+            return "Gemini quota reached while reading image. Please wait 1–2 minutes and try again."
 
         return f"Image reading failed. Technical detail: {error_text[:300]}"
 
@@ -197,10 +194,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
             "title": "YouTube Video",
             "source_name": "YouTube",
             "url": url,
-            "text": (
-                "Could not fetch captions/transcript for this YouTube video. "
-                f"Technical detail: {str(e)}"
-            ),
+            "text": f"Could not fetch captions/transcript for this YouTube video. Technical detail: {str(e)}",
             "type": "video_error",
         }
 
@@ -208,10 +202,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
         "title": "YouTube Video",
         "source_name": "YouTube",
         "url": url,
-        "text": (
-            "No accessible captions or transcript were found for this video. "
-            "Try a YouTube video with English captions, or paste the transcript manually."
-        ),
+        "text": "No accessible captions or transcript were found for this video.",
         "type": "video_error",
     }
 
@@ -234,11 +225,9 @@ def fetch_url_text(url: str) -> Dict[str, Any]:
         if not text:
             text = soup.get_text(" ", strip=True)
 
-        source_name = get_source_name(url, title)
-
         return {
             "title": title,
-            "source_name": source_name,
+            "source_name": get_source_name(url, title),
             "url": url,
             "text": text[:12000],
             "type": "url",
@@ -259,11 +248,7 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
         pdf_bytes = uploaded_pdf.read()
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-        pages = []
-        for page in doc:
-            pages.append(page.get_text())
-
-        text = "\n".join(pages)
+        text = "\n".join([page.get_text() for page in doc])
         title = uploaded_pdf.name
 
         source_name = (
@@ -271,10 +256,7 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
             .replace("_", " ")
             .replace("-", " ")
             .strip()[:25]
-        )
-
-        if not source_name:
-            source_name = "PDF"
+        ) or "PDF"
 
         return {
             "title": title,
@@ -297,7 +279,6 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
 def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
     try:
         doc = Document(uploaded_docx)
-
         paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
         text = "\n".join(paragraphs)
 
@@ -307,10 +288,7 @@ def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
             .replace("_", " ")
             .replace("-", " ")
             .strip()[:25]
-        )
-
-        if not source_name:
-            source_name = "DOCX"
+        ) or "DOCX"
 
         return {
             "title": title,
@@ -341,7 +319,7 @@ You are Agent ARCA's image reading tool.
 Read and understand this image. Extract:
 - visible text
 - key information
-- tables or chart details if present
+- table or chart details if present
 - important visual observations
 - anything useful for research or studying
 
@@ -366,10 +344,7 @@ Return concise but complete extracted content.
             .replace("_", " ")
             .replace("-", " ")
             .strip()[:25]
-        )
-
-        if not source_name:
-            source_name = "IMAGE"
+        ) or "IMAGE"
 
         return {
             "title": title,
@@ -406,12 +381,11 @@ def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         title = item.get("title") or item.get("url", "Untitled Source")
         url = item.get("url", "")
         content = item.get("raw_content") or item.get("content") or ""
-        source_name = get_source_name(url, title)
 
         sources.append(
             {
                 "title": title,
-                "source_name": source_name,
+                "source_name": get_source_name(url, title),
                 "url": url,
                 "text": content[:12000],
                 "type": "web_search",
@@ -445,7 +419,6 @@ Content:
         )
 
     sources_text = "\n\n".join(source_blocks)
-
     recent_chat = chat_history[-6:] if chat_history else []
     chat_text = "\n".join([f"{role}: {msg}" for role, msg in recent_chat])
 
@@ -454,11 +427,9 @@ Content:
 You are operating in Student Mode.
 
 Your goals:
-- explain concepts clearly and simply
-- help users understand and retain information
-- simplify technical language
+- explain clearly and simply
+- help the user learn and retain information
 - identify important concepts
-- focus on learning and understanding
 - provide beginner-friendly explanations
 
 At the end include:
@@ -475,7 +446,6 @@ You are operating in General Mode.
 Your goals:
 - provide professional research synthesis
 - focus on insights and decision-making
-- keep explanations concise and structured
 - highlight actionable findings
 - provide executive-style summaries
 """
@@ -488,10 +458,10 @@ Return this exact format:
 Give the clearest answer to the user's question.
 
 ## Agreements Across Sources
-List the main points that multiple sources agree on.
+List points that multiple sources agree on.
 
 ## Conflicting Information
-List contradictions, disagreements, or differences between sources. If none are found, say so.
+List contradictions or differences between sources. If none are found, say so.
 
 ## Strongest Evidence
 Explain which sources appear most useful or evidence-backed and why.
@@ -500,7 +470,7 @@ Explain which sources appear most useful or evidence-backed and why.
 Mention what is unclear, unsupported, missing, or not verified.
 
 ## Final Consensus
-Give a balanced conclusion based on the sources.
+Give a balanced conclusion.
 
 ## Confidence Assessment
 Rate confidence as Low, Medium, or High and explain why.
@@ -540,14 +510,12 @@ Analysis mode:
 
 Your job:
 - Answer the user's question using the provided sources.
-- Do not include citations inside the answer.
 - Do not include source names or URLs inside the answer body.
 - The app will show clickable sources separately below the answer.
-- If the sources do not contain enough evidence, say that clearly.
-- Be simple enough for non-technical users.
+- If evidence is insufficient, say so clearly.
 - Do not invent facts.
 - Keep the answer structured and easy to read.
-- If Compare & Verify mode is active, compare sources against each other instead of only summarizing them.
+- If Compare & Verify mode is active, compare sources against each other.
 
 User question:
 {question}
@@ -603,7 +571,7 @@ List strengths.
 List weak areas.
 
 ## Corrected Explanation
-Explain the missed concepts in simple words.
+Explain missed concepts simply.
 
 ## Suggested Revision Plan
 Give 3 focused revision steps.
@@ -612,32 +580,71 @@ Give 3 focused revision steps.
     return safe_generate_content(prompt)
 
 
+def clean_export_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("##", "")
+    text = text.replace("*", "")
+    return text.strip()
+
+
 def generate_word_report(
     question: str,
     answer: str,
     sources: List[Dict[str, Any]],
     user_mode: str,
+    analysis_mode: str,
+    quiz_feedback: str = "",
 ):
+    clean_answer = clean_export_text(answer)
+    clean_feedback = clean_export_text(quiz_feedback) if quiz_feedback else ""
+
     doc = Document()
 
-    doc.add_heading("Agent ARCA Research Report", level=1)
+    doc.add_heading("Agent ARCA Research Report", level=0)
 
-    doc.add_heading("Mode", level=2)
-    doc.add_paragraph(user_mode)
+    doc.add_paragraph(
+        "Generated by Agent ARCA — an AI-powered multimodal research, learning, and decision-intelligence assistant."
+    )
 
-    doc.add_heading("Research Question", level=2)
+    doc.add_heading("Report Overview", level=1)
+    doc.add_paragraph(f"Mode: {user_mode}")
+    doc.add_paragraph(f"Analysis Type: {analysis_mode}")
+    doc.add_paragraph(f"Sources Used: {len(sources)}")
+
+    doc.add_heading("Research Question", level=1)
     doc.add_paragraph(question)
 
-    doc.add_heading("Generated Findings", level=2)
-    doc.add_paragraph(answer)
+    doc.add_heading("Generated Findings", level=1)
+    doc.add_paragraph(clean_answer)
 
-    doc.add_heading("Sources Used", level=2)
+    if clean_feedback:
+        doc.add_heading("Student Quiz Feedback", level=1)
+        doc.add_paragraph(clean_feedback)
+
+    doc.add_heading("Research Dashboard", level=1)
+    doc.add_paragraph(f"Source Count: {len(sources)}")
+    doc.add_paragraph(f"Answer Length: {len(answer.split())} words")
+
+    source_types = {}
+    for src in sources:
+        source_types[src["type"]] = source_types.get(src["type"], 0) + 1
+
+    for source_type, count in source_types.items():
+        doc.add_paragraph(f"{source_type}: {count}")
+
+    doc.add_heading("Sources Used", level=1)
 
     for i, src in enumerate(sources, start=1):
         p = doc.add_paragraph(style="List Bullet")
         p.add_run(f"{i}. {src['source_name']} — ").bold = True
         p.add_run(src["title"])
         p.add_run(f"\n{src['url']}")
+
+    doc.add_heading("Suggested Next Steps", level=1)
+    doc.add_paragraph("1. Review the generated findings.")
+    doc.add_paragraph("2. Open and verify the listed sources.")
+    doc.add_paragraph("3. Ask follow-up questions in ARCA.")
+    doc.add_paragraph("4. Export a presentation deck if needed.")
 
     buffer = BytesIO()
     doc.save(buffer)
@@ -651,15 +658,23 @@ def generate_powerpoint_deck(
     answer: str,
     sources: List[Dict[str, Any]],
     user_mode: str,
+    analysis_mode: str,
+    quiz_feedback: str = "",
 ):
     prs = Presentation()
 
     title_slide_layout = prs.slide_layouts[0]
     content_slide_layout = prs.slide_layouts[1]
 
+    clean_answer = clean_export_text(answer)
+    clean_feedback = clean_export_text(quiz_feedback) if quiz_feedback else ""
+
+    lines = [line.strip() for line in clean_answer.split("\n") if line.strip()]
+    summary_lines = lines[:8] if lines else ["No findings available."]
+
     slide = prs.slides.add_slide(title_slide_layout)
     slide.shapes.title.text = "Agent ARCA Research Deck"
-    slide.placeholders[1].text = f"Mode: {user_mode}\nQuestion: {question}"
+    slide.placeholders[1].text = f"{user_mode} | {analysis_mode}"
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Research Question"
@@ -667,50 +682,38 @@ def generate_powerpoint_deck(
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Key Findings"
-
-    clean_answer = re.sub(r"#+\s*", "", answer)
-    clean_answer = clean_answer.replace("*", "")
-    lines = [line.strip() for line in clean_answer.split("\n") if line.strip()]
-    summary_lines = lines[:8] if lines else ["No findings available."]
-
-    slide.placeholders[1].text = "\n".join(summary_lines)
+    slide.placeholders[1].text = "\n".join(summary_lines[:8])
 
     slide = prs.slides.add_slide(content_slide_layout)
-    slide.shapes.title.text = "Simple Summary"
-
-    simple_summary = []
-    capture = False
-
-    for line in lines:
-        if "Simple Summary" in line:
-            capture = True
-            continue
-        if capture and line.startswith("##"):
-            break
-        if capture:
-            simple_summary.append(line)
-
-    if not simple_summary:
-        simple_summary = summary_lines[:4]
-
-    slide.placeholders[1].text = "\n".join(simple_summary[:6])
-
-    slide = prs.slides.add_slide(content_slide_layout)
-    slide.shapes.title.text = "Sources Used"
+    slide.shapes.title.text = "Research Dashboard"
+    slide.placeholders[1].text = (
+        f"Sources used: {len(sources)}\n"
+        f"Answer length: {len(answer.split())} words\n"
+        f"Mode: {user_mode}\n"
+        f"Analysis: {analysis_mode}"
+    )
 
     source_lines = []
     for i, src in enumerate(sources, start=1):
         source_lines.append(f"{i}. {src['source_name']} — {src['title']}")
 
+    slide = prs.slides.add_slide(content_slide_layout)
+    slide.shapes.title.text = "Sources Used"
     slide.placeholders[1].text = "\n".join(source_lines[:10]) if source_lines else "No sources available."
+
+    if clean_feedback:
+        feedback_lines = [line.strip() for line in clean_feedback.split("\n") if line.strip()]
+        slide = prs.slides.add_slide(content_slide_layout)
+        slide.shapes.title.text = "Quiz Feedback"
+        slide.placeholders[1].text = "\n".join(feedback_lines[:8])
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Next Steps"
     slide.placeholders[1].text = (
-        "1. Review the generated findings.\n"
-        "2. Check the sources for deeper reading.\n"
-        "3. Ask ARCA follow-up questions.\n"
-        "4. Export the report or continue comparison research."
+        "1. Review findings.\n"
+        "2. Verify sources.\n"
+        "3. Ask follow-up questions.\n"
+        "4. Use report or deck for study/work."
     )
 
     buffer = BytesIO()
@@ -759,8 +762,7 @@ def run_pipeline(
     )
 
     if should_search_web:
-        web_sources = search_web(question)
-        all_sources.extend(web_sources)
+        all_sources.extend(search_web(question))
 
     prompt = build_prompt(
         question=question,
@@ -785,8 +787,6 @@ Sources used:
 {", ".join([src["source_name"] for src in all_sources])}
 """.strip()
 
-    evaluation = evaluate_answer(answer, len(all_sources))
-
     return {
         "answer": answer,
         "sources": [
@@ -799,5 +799,5 @@ Sources used:
             for src in all_sources
         ],
         "context": new_context,
-        "evaluation": evaluation,
+        "evaluation": evaluate_answer(answer, len(all_sources)),
     }

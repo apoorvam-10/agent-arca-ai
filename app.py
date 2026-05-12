@@ -410,7 +410,7 @@ if st.session_state.latest_student_answer:
 
     st.subheader("📄 Export Research Outputs")
 
-    st.caption("Download your research as a Word report or PowerPoint deck.")
+    st.caption("Download a professional Word report or PowerPoint deck from your ARCA findings.")
 
     col1, col2 = st.columns(2)
 
@@ -420,10 +420,12 @@ if st.session_state.latest_student_answer:
             answer=st.session_state.latest_student_answer,
             sources=st.session_state.latest_sources,
             user_mode=st.session_state.latest_user_mode,
+            analysis_mode=st.session_state.latest_analysis_mode,
+            quiz_feedback=st.session_state.latest_quiz_feedback,
         )
 
         st.download_button(
-            label="⬇️ Download Word Report",
+            label="⬇️ Download Professional Word Report",
             data=report_file,
             file_name="ARCA_Research_Report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -436,10 +438,12 @@ if st.session_state.latest_student_answer:
             answer=st.session_state.latest_student_answer,
             sources=st.session_state.latest_sources,
             user_mode=st.session_state.latest_user_mode,
+            analysis_mode=st.session_state.latest_analysis_mode,
+            quiz_feedback=st.session_state.latest_quiz_feedback,
         )
 
         st.download_button(
-            label="⬇️ Download PowerPoint Deck",
+            label="⬇️ Download Professional PowerPoint Deck",
             data=ppt_file,
             file_name="ARCA_Research_Deck.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
