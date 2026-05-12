@@ -50,6 +50,29 @@ def safe_generate_content(prompt: str) -> str:
         return f"⚠️ AI generation failed. Please try again. Technical detail: {error_text[:300]}"
 
 
+def safe_generate_multimodal_content(parts: list) -> str:
+    try:
+        model = get_gemini_model()
+        response = model.generate_content(parts)
+        text = getattr(response, "text", "").strip()
+
+        if not text:
+            return "I could not extract useful information from this image."
+
+        return text
+
+    except Exception as e:
+        error_text = str(e)
+
+        if "429" in error_text or "ResourceExhausted" in error_text or "quota" in error_text.lower():
+            return (
+                "Gemini quota reached while reading image. "
+                "Please wait 1–2 minutes and try again."
+            )
+
+        return f"Image reading failed. Technical detail: {error_text[:300]}"
+
+
 def get_tavily_client():
     api_key = st.secrets.get("TAVILY_API_KEY", "")
     if not api_key:
@@ -304,6 +327,65 @@ def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
             "url": uploaded_docx.name,
             "text": f"Error reading DOCX: {str(e)}",
             "type": "docx_error",
+        }
+
+
+def extract_image_text(uploaded_image) -> Dict[str, Any]:
+    try:
+        image_bytes = uploaded_image.read()
+        mime_type = uploaded_image.type or "image/png"
+
+        prompt = """
+You are Agent ARCA's image reading tool.
+
+Read and understand this image. Extract:
+- visible text
+- key information
+- tables or chart details if present
+- important visual observations
+- anything useful for research or studying
+
+Return concise but complete extracted content.
+""".strip()
+
+        extracted_text = safe_generate_multimodal_content(
+            [
+                prompt,
+                {
+                    "mime_type": mime_type,
+                    "data": image_bytes,
+                },
+            ]
+        )
+
+        title = uploaded_image.name
+        source_name = (
+            title.replace(".png", "")
+            .replace(".jpg", "")
+            .replace(".jpeg", "")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()[:25]
+        )
+
+        if not source_name:
+            source_name = "IMAGE"
+
+        return {
+            "title": title,
+            "source_name": source_name,
+            "url": title,
+            "text": extracted_text[:15000],
+            "type": "image",
+        }
+
+    except Exception as e:
+        return {
+            "title": uploaded_image.name,
+            "source_name": "IMAGE",
+            "url": uploaded_image.name,
+            "text": f"Error reading image: {str(e)}",
+            "type": "image_error",
         }
 
 
@@ -643,6 +725,7 @@ def run_pipeline(
     urls: List[str],
     uploaded_pdfs,
     uploaded_docs,
+    uploaded_images,
     mode: str,
     user_mode: str,
     analysis_mode: str,
@@ -665,6 +748,10 @@ def run_pipeline(
         if uploaded_docs:
             for docx in uploaded_docs:
                 all_sources.append(extract_docx_text(docx))
+
+        if uploaded_images:
+            for image in uploaded_images:
+                all_sources.append(extract_image_text(image))
 
     should_search_web = (
         mode in ["Search the web", "Use my sources + web search"]

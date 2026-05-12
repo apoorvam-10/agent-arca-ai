@@ -130,7 +130,7 @@ def show_research_dashboard(answer, sources, user_mode, analysis_mode):
     elif source_count >= 2:
         st.info("Moderate source coverage. Add more sources for stronger comparison.")
     else:
-        st.warning("Limited source coverage. Add more PDFs, Word docs, URLs, or web search for better verification.")
+        st.warning("Limited source coverage. Add more PDFs, Word docs, images, URLs, or web search for better verification.")
 
 
 if "chat_history" not in st.session_state:
@@ -190,7 +190,7 @@ with st.sidebar:
 
     if analysis_mode == "Compare & Verify":
         st.warning("🔍 Compare & Verify Mode Active")
-        st.caption("Best for comparing multiple PDFs, Word docs, URLs, videos, or web results.")
+        st.caption("Best for comparing multiple PDFs, Word docs, images, URLs, videos, or web results.")
 
     st.divider()
 
@@ -219,6 +219,12 @@ with st.sidebar:
     uploaded_docs = st.file_uploader(
         "Upload Word documents",
         type=["docx"],
+        accept_multiple_files=True,
+    )
+
+    uploaded_images = st.file_uploader(
+        "Upload images or screenshots",
+        type=["png", "jpg", "jpeg"],
         accept_multiple_files=True,
     )
 
@@ -299,6 +305,7 @@ if question:
                 urls=urls,
                 uploaded_pdfs=uploaded_pdfs,
                 uploaded_docs=uploaded_docs,
+                uploaded_images=uploaded_images,
                 mode=source_mode,
                 user_mode=user_mode,
                 analysis_mode=analysis_mode,
