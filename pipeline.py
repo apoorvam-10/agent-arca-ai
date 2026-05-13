@@ -412,7 +412,7 @@ def build_prompt(
     for i, src in enumerate(sources, start=1):
         source_blocks.append(
             f"""
-Source {i}
+[Source {i}]
 Source name: {src["source_name"]}
 Title: {src["title"]}
 URL: {src["url"]}
@@ -454,21 +454,36 @@ Your goals:
 - provide executive-style summaries
 """
 
+    citation_rules = """
+Citation and evidence rules:
+- Use inline evidence markers for important factual claims.
+- Use the exact format [Source 1], [Source 2], etc.
+- Only cite a source if that source actually supports the claim.
+- Do not cite every sentence; cite important claims, comparisons, risks, numbers, and conclusions.
+- If evidence is weak or missing, say that clearly.
+- Do not invent source numbers.
+"""
+
     if analysis_mode == "Compare & Verify":
         output_format = """
 Return this exact format:
 
 ## Key Takeaway
-Give one clear sentence that captures the final conclusion.
+Give one clear sentence that captures the final conclusion with source markers if supported.
 
 ## Executive Answer
-Give the clearest answer to the user's question.
+Give the clearest answer to the user's question with source markers for important claims.
+
+## Evidence Map
+- Claim: ...
+  Evidence: [Source X], [Source Y]
+  Strength: Strong / Moderate / Weak
 
 ## Agreements Across Sources
-List points that multiple sources agree on.
+List points that multiple sources agree on and include source markers.
 
 ## Conflicting Information
-List contradictions or differences between sources. If none are found, say so.
+List contradictions or differences between sources and include source markers. If none are found, say so.
 
 ## Strongest Evidence
 Explain which sources appear most useful or evidence-backed and why.
@@ -477,7 +492,7 @@ Explain which sources appear most useful or evidence-backed and why.
 Mention what is unclear, unsupported, missing, or not verified.
 
 ## Final Consensus
-Give a balanced conclusion.
+Give a balanced conclusion with source markers.
 
 ## Confidence Assessment
 Rate confidence as Low, Medium, or High and explain why.
@@ -496,15 +511,20 @@ Give 3 practical next steps based on the findings.
 Return this format:
 
 ## Key Takeaway
-Give one clear sentence that captures the most important finding.
+Give one clear sentence that captures the most important finding with source markers if supported.
 
 ## Answer
-Clear answer.
+Clear answer with source markers for important factual claims.
+
+## Evidence Map
+- Claim: ...
+  Evidence: [Source X]
+  Strength: Strong / Moderate / Weak
 
 ## Key Points
-- Point 1
-- Point 2
-- Point 3
+- Point 1 with source marker if supported
+- Point 2 with source marker if supported
+- Point 3 with source marker if supported
 
 ## Simple Summary
 Explain in very simple words.
@@ -530,10 +550,10 @@ You are Agent ARCA, a trustworthy AI research assistant.
 Analysis mode:
 {analysis_mode}
 
+{citation_rules}
+
 Your job:
 - Answer the user's question using the provided sources.
-- Do not include source names or URLs inside the answer body.
-- The app will show clickable sources separately below the answer.
 - If evidence is insufficient, say so clearly.
 - Do not invent facts.
 - Keep the answer structured and easy to read.
@@ -666,7 +686,7 @@ def generate_word_report(
 
     for i, src in enumerate(sources, start=1):
         p = doc.add_paragraph(style="List Bullet")
-        p.add_run(f"{i}. {src['source_name']} — ").bold = True
+        p.add_run(f"Source {i}: {src['source_name']} — ").bold = True
         p.add_run(src["title"])
         p.add_run(f"\n{src['url']}")
 
@@ -751,7 +771,7 @@ def generate_pdf_report(
     story.append(Paragraph("Sources Used", styles["Heading1"]))
 
     for i, src in enumerate(sources, start=1):
-        source_text = f"{i}. {src['source_name']} — {src['title']}<br/>{src['url']}"
+        source_text = f"Source {i}: {src['source_name']} — {src['title']}<br/>{src['url']}"
         story.append(Paragraph(make_paragraph_safe(source_text), styles["BodyText"]))
         story.append(Spacer(1, 8))
 
@@ -809,7 +829,7 @@ def generate_powerpoint_deck(
 
     source_lines = []
     for i, src in enumerate(sources, start=1):
-        source_lines.append(f"{i}. {src['source_name']} — {src['title']}")
+        source_lines.append(f"Source {i}: {src['source_name']} — {src['title']}")
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Sources Used"
