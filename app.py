@@ -20,20 +20,21 @@ st.title("🤖 Agent ARCA")
 st.caption("AI-powered multimodal research, learning, and decision-intelligence assistant.")
 
 
-def make_clickable_citations(answer, sources):
-    for src in sources:
-        name = src.get("source_name", "")
+def make_clickable_source_markers(answer, sources):
+    """
+    Converts [Source 1], [Source 2], etc. into clickable links.
+    """
+    for i, src in enumerate(sources, start=1):
         url = src.get("url", "")
 
-        if not name or not url:
+        if not url:
             continue
 
-        escaped_name = re.escape(name)
+        marker = f"[Source {i}]"
 
-        answer = re.sub(
-            rf"\[{escaped_name}\]",
-            f'<a href="{url}" target="_blank">[{name}]</a>',
-            answer,
+        answer = answer.replace(
+            marker,
+            f'<a href="{url}" target="_blank">{marker}</a>',
         )
 
     return answer
@@ -42,6 +43,7 @@ def make_clickable_citations(answer, sources):
 def clean_text_for_audio(text):
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"\[Source\s+\d+\]", "", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"\[([^\]]+)\]", r"\1", text)
     text = text.replace("*", "")
@@ -336,7 +338,7 @@ for item in st.session_state.chat_history:
                     start=1,
                 ):
                     st.markdown(
-                        f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
+                        f"{i}. **Source {i}: {src['source_name']}** — [{src['title']}]({src['url']})"
                     )
 
         else:
@@ -361,7 +363,7 @@ if question:
     ]
 
     with st.chat_message("assistant"):
-        with st.spinner("ARCA is researching..."):
+        with st.spinner("ARCA is researching and mapping evidence..."):
             result = run_pipeline(
                 question=question,
                 urls=urls,
@@ -387,7 +389,7 @@ if question:
 
         answer = result["answer"]
 
-        clickable_answer = make_clickable_citations(
+        clickable_answer = make_clickable_source_markers(
             answer,
             result["sources"],
         )
@@ -429,7 +431,7 @@ if question:
                 start=1,
             ):
                 st.markdown(
-                    f"{i}. [{src['source_name']} — {src['title']}]({src['url']})"
+                    f"{i}. **Source {i}: {src['source_name']}** — [{src['title']}]({src['url']})"
                 )
 
         st.session_state.latest_student_answer = (
