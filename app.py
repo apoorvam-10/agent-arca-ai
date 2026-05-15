@@ -27,37 +27,103 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.4rem;
+        padding-top: 1.1rem;
         padding-bottom: 1rem;
-        max-width: 1150px;
+        max-width: 1180px;
     }
+
     section[data-testid="stSidebar"] .block-container {
         padding-top: 1rem;
     }
+
     div[data-testid="stVerticalBlock"] {
-        gap: 0.55rem;
+        gap: 0.5rem;
     }
+
+    .arca-hero {
+        padding: 1rem 1.2rem;
+        border: 1px solid rgba(120,120,120,0.25);
+        border-radius: 18px;
+        background: linear-gradient(135deg, rgba(120,120,255,0.08), rgba(120,255,220,0.05));
+        margin-bottom: 0.8rem;
+    }
+
+    .arca-title {
+        font-size: 2rem;
+        font-weight: 750;
+        margin-bottom: 0.15rem;
+    }
+
+    .arca-subtitle {
+        color: rgba(120,120,120,0.95);
+        font-size: 1rem;
+    }
+
+    .arca-card {
+        padding: 0.85rem 1rem;
+        border: 1px solid rgba(120,120,120,0.22);
+        border-radius: 16px;
+        background: rgba(250,250,250,0.03);
+        min-height: 105px;
+    }
+
+    .arca-card-title {
+        font-weight: 700;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .arca-card-text {
+        color: rgba(120,120,120,0.95);
+        font-size: 0.9rem;
+    }
+
+    .arca-badge {
+        display: inline-block;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid rgba(120,120,120,0.22);
+        background: rgba(120,120,120,0.08);
+        font-size: 0.8rem;
+        margin-right: 0.35rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .answer-card {
+        padding: 1rem 1.1rem;
+        border: 1px solid rgba(120,120,120,0.22);
+        border-radius: 18px;
+        background: rgba(250,250,250,0.035);
+        margin-top: 0.4rem;
+    }
+
+    .small-muted {
+        color: rgba(120,120,120,0.95);
+        font-size: 0.86rem;
+    }
+
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0.8rem;
+        gap: 0.75rem;
     }
+
     .stTabs [data-baseweb="tab"] {
-        height: 2.3rem;
-        padding: 0 0.6rem;
+        height: 2.35rem;
+        padding: 0 0.65rem;
     }
-    h1 {
-        margin-bottom: 0.1rem;
+
+    h1, h2, h3 {
+        margin-top: 0.3rem;
+        margin-bottom: 0.35rem;
     }
-    h2, h3 {
-        margin-top: 0.6rem;
-        margin-bottom: 0.4rem;
+
+    hr {
+        margin-top: 0.7rem;
+        margin-bottom: 0.7rem;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
-st.title("🤖 Agent ARCA")
-st.caption("Multimodal research, learning, and decision-intelligence assistant.")
 
 
 def make_clickable_source_markers(answer, sources):
@@ -83,7 +149,6 @@ def clean_text_for_audio(text):
     text = text.replace("*", "")
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text).strip()
-
     return text[:2500]
 
 
@@ -102,7 +167,6 @@ def create_audio_file(text):
         )
 
         tts.save(temp_file.name)
-
         return temp_file.name
 
     except Exception:
@@ -196,47 +260,92 @@ def split_uploaded_files(uploaded_files):
     return uploaded_pdfs, uploaded_docs, uploaded_ppts, uploaded_images
 
 
+def file_icon(file_name):
+    name = file_name.lower()
+
+    if name.endswith(".pdf"):
+        return "📄"
+    if name.endswith(".docx"):
+        return "📝"
+    if name.endswith(".pptx"):
+        return "📊"
+    if name.endswith((".png", ".jpg", ".jpeg")):
+        return "🖼️"
+
+    return "📎"
+
+
+def show_attached_files(uploaded_files):
+    if not uploaded_files:
+        return
+
+    with st.expander(f"Attached files ({len(uploaded_files)})", expanded=False):
+        for file in uploaded_files:
+            st.markdown(f"{file_icon(file.name)} **{file.name}**")
+
+
+def build_style_instruction(output_style):
+    if output_style == "Simple Summary":
+        return "Answer as a simple, short summary. Use plain language and avoid unnecessary detail."
+    if output_style == "Study Guide":
+        return "Answer as a student study guide with concepts, examples, quick revision points, and a short quiz."
+    if output_style == "Detailed Research":
+        return "Answer as a detailed research synthesis with evidence, comparisons, limits, and next steps."
+    if output_style == "Presentation Notes":
+        return "Answer as presentation-ready notes with clear bullets, slide-friendly wording, and key takeaways."
+    if output_style == "Decision Brief":
+        return "Answer as a professional decision brief with recommendation, evidence, risks, and next actions."
+
+    return "Answer clearly and use evidence from sources."
+
+
 def show_inline_visual_reference(question):
     if not st.session_state.show_inline_image or not question:
         return
 
-    images = find_reference_images_cached(
-        query=f"{question} educational diagram visual reference",
-        max_images=1,
-        prefer_trusted_sources=True,
-    )
+    with st.expander("🖼️ Add visual snapshot", expanded=False):
+        if st.button("Find one visual", use_container_width=True):
+            with st.spinner("Finding visual..."):
+                images = find_reference_images_cached(
+                    query=f"{question} educational diagram visual reference",
+                    max_images=1,
+                    prefer_trusted_sources=True,
+                )
 
-    if not images:
-        return
+            if not images:
+                st.info("No visual found.")
+                return
 
-    image = images[0]
-    image_url = image.get("image_url", "")
-    source_url = image.get("source_url", "")
-    description = image.get("description", "Visual reference")
+            image = images[0]
+            image_url = image.get("image_url", "")
+            source_url = image.get("source_url", "")
+            description = image.get("description", "Visual reference")
 
-    if not image_url:
-        return
+            if not image_url:
+                st.info("No visual found.")
+                return
 
-    image_bytes, _ = fetch_image_bytes(image_url)
+            image_bytes, _ = fetch_image_bytes(image_url)
 
-    if not image_bytes:
-        return
+            if not image_bytes:
+                st.info("Image preview unavailable.")
+                st.markdown(f"[Open image]({image_url})")
+                return
 
-    st.markdown("### 🖼️ Visual Snapshot")
-    st.image(
-        image_bytes,
-        caption=description,
-        use_container_width=True,
-    )
+            st.image(
+                image_bytes,
+                caption=description,
+                use_container_width=True,
+            )
 
-    link_cols = st.columns(2)
+            cols = st.columns(2)
 
-    with link_cols[0]:
-        st.markdown(f"[Open image]({image_url})")
+            with cols[0]:
+                st.markdown(f"[Open image]({image_url})")
 
-    with link_cols[1]:
-        if source_url and source_url != image_url:
-            st.markdown(f"[Open source page]({source_url})")
+            with cols[1]:
+                if source_url and source_url != image_url:
+                    st.markdown(f"[Open source page]({source_url})")
 
 
 def build_saved_research_markdown(saved_findings):
@@ -280,6 +389,98 @@ def build_saved_research_markdown(saved_findings):
         content += "\n---\n\n"
 
     return content
+
+
+def show_hero():
+    st.markdown(
+        """
+        <div class="arca-hero">
+            <div class="arca-title">Agent ARCA</div>
+            <div class="arca-subtitle">
+                Research faster, understand better, and turn sources into summaries, reports, slides, and study tools.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_start_cards():
+    if st.session_state.chat_history:
+        return
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(
+            """
+            <div class="arca-card">
+                <div class="arca-card-title">🎓 Study a topic</div>
+                <div class="arca-card-text">Explain concepts, create quizzes, and simplify class materials.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col2:
+        st.markdown(
+            """
+            <div class="arca-card">
+                <div class="arca-card-title">📎 Summarize files</div>
+                <div class="arca-card-text">Upload PDFs, docs, slides, or screenshots and get clean findings.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col3:
+        st.markdown(
+            """
+            <div class="arca-card">
+                <div class="arca-card-title">🔍 Research the web</div>
+                <div class="arca-card-text">Use trusted sources, citations, evidence maps, and exportable outputs.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("")
+
+
+def show_example_prompts():
+    if st.session_state.chat_history:
+        return
+
+    st.markdown("**Try asking:**")
+
+    examples = [
+        "Summarize this document in simple terms",
+        "Compare these sources and find conflicts",
+        "Create presentation notes from this topic",
+        "Explain this like I am a beginner",
+        "Make a study guide with quiz questions",
+    ]
+
+    cols = st.columns(len(examples))
+
+    for col, example in zip(cols, examples):
+        with col:
+            if st.button(example, use_container_width=True):
+                st.session_state.pending_prompt = example
+                st.rerun()
+
+
+def show_answer_badges(user_mode, analysis_mode, research_depth, source_mode, output_style):
+    st.markdown(
+        f"""
+        <span class="arca-badge">{user_mode}</span>
+        <span class="arca-badge">{analysis_mode}</span>
+        <span class="arca-badge">{research_depth}</span>
+        <span class="arca-badge">{source_mode}</span>
+        <span class="arca-badge">{output_style}</span>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def show_dashboard():
@@ -513,6 +714,7 @@ def initialize_session_state():
         "latest_metadata": {},
         "saved_findings": [],
         "show_inline_image": True,
+        "pending_prompt": "",
     }
 
     for key, value in defaults.items():
@@ -523,22 +725,28 @@ def initialize_session_state():
 initialize_session_state()
 
 
+show_hero()
+
+
 with st.sidebar:
-    st.subheader("Settings")
+    st.subheader("Setup")
+
+    output_style = st.selectbox(
+        "Answer style",
+        [
+            "Simple Summary",
+            "Study Guide",
+            "Detailed Research",
+            "Presentation Notes",
+            "Decision Brief",
+        ],
+        index=0,
+    )
 
     user_mode = st.radio(
         "Mode",
         ["Student Mode", "General Mode"],
-    )
-
-    analysis_mode = st.radio(
-        "Analysis",
-        ["Standard Research", "Compare & Verify"],
-    )
-
-    research_depth = st.radio(
-        "Speed",
-        ["Fast Research", "Deep Research"],
+        horizontal=True,
     )
 
     source_mode = st.radio(
@@ -547,9 +755,9 @@ with st.sidebar:
     )
 
     urls_input = st.text_area(
-        "URLs / YouTube",
-        placeholder="Paste links here...",
-        height=90,
+        "Links",
+        placeholder="Paste URLs or YouTube links...",
+        height=80,
     )
 
     uploaded_files = st.file_uploader(
@@ -559,10 +767,19 @@ with st.sidebar:
         help="PDF, DOCX, PPTX, PNG, JPG, JPEG",
     )
 
-    if uploaded_files:
-        st.caption(f"{len(uploaded_files)} file(s) attached")
+    show_attached_files(uploaded_files)
 
     with st.expander("Advanced", expanded=False):
+        analysis_mode = st.radio(
+            "Analysis",
+            ["Standard Research", "Compare & Verify"],
+        )
+
+        research_depth = st.radio(
+            "Speed",
+            ["Fast Research", "Deep Research"],
+        )
+
         max_web_results = st.slider(
             "Web sources",
             min_value=2,
@@ -576,11 +793,11 @@ with st.sidebar:
         )
 
         st.session_state.show_inline_image = st.checkbox(
-            "Show visual snapshot",
+            "Enable visual snapshot",
             value=st.session_state.show_inline_image,
         )
 
-    if st.button("Clear", use_container_width=True):
+    if st.button("Clear Session", use_container_width=True):
         st.session_state.chat_history = []
         st.session_state.research_context = None
         st.session_state.latest_student_answer = ""
@@ -590,11 +807,13 @@ with st.sidebar:
         st.session_state.latest_user_mode = ""
         st.session_state.latest_analysis_mode = ""
         st.session_state.latest_metadata = {}
+        st.session_state.pending_prompt = ""
         st.rerun()
 
 
 with st.expander("🎤 Voice input", expanded=False):
     audio_input = st.audio_input("Record your question")
+
 
 voice_question = ""
 
@@ -604,7 +823,16 @@ if audio_input:
     if voice_question:
         st.info(f"🗣️ {voice_question}")
 
-question = st.chat_input("Ask a research or learning question...")
+
+show_start_cards()
+show_example_prompts()
+
+
+question = st.chat_input("Ask a question, paste a task, or upload files and ask what you need...")
+
+if st.session_state.pending_prompt:
+    question = st.session_state.pending_prompt
+    st.session_state.pending_prompt = ""
 
 if voice_question:
     question = voice_question
@@ -652,10 +880,23 @@ with research_tab:
             uploaded_files
         )
 
+        style_instruction = build_style_instruction(output_style)
+
+        pipeline_question = f"""
+User question:
+{question}
+
+Output style requested:
+{output_style}
+
+Style instruction:
+{style_instruction}
+""".strip()
+
         with st.chat_message("assistant"):
             with st.spinner("Researching..."):
                 result = run_pipeline(
-                    question=question,
+                    question=pipeline_question,
                     urls=urls,
                     uploaded_pdfs=uploaded_pdfs,
                     uploaded_docs=uploaded_docs,
@@ -682,14 +923,17 @@ with research_tab:
 
             clickable_answer = make_clickable_source_markers(answer, sources)
 
-            if user_mode == "Student Mode":
-                st.markdown("### 🎓 Learning Response")
-            elif analysis_mode == "Compare & Verify":
-                st.markdown("### 🔍 Compare & Verify Response")
-            else:
-                st.markdown("### 💼 Research Response")
+            show_answer_badges(
+                user_mode=user_mode,
+                analysis_mode=analysis_mode,
+                research_depth=research_depth,
+                source_mode=source_mode,
+                output_style=output_style,
+            )
 
+            st.markdown('<div class="answer-card">', unsafe_allow_html=True)
             st.markdown(clickable_answer, unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
             show_inline_visual_reference(question)
 
@@ -718,10 +962,12 @@ with research_tab:
         )
 
     if st.session_state.latest_student_answer:
-        col1, col2 = st.columns(2)
+        st.markdown("")
 
-        with col1:
-            if st.button("⭐ Save Finding", use_container_width=True):
+        action_col1, action_col2, action_col3 = st.columns(3)
+
+        with action_col1:
+            if st.button("⭐ Save", use_container_width=True):
                 st.session_state.saved_findings.append(
                     {
                         "question": st.session_state.latest_question,
@@ -736,14 +982,26 @@ with research_tab:
 
                 st.success("Saved.")
 
-        with col2:
-            st.caption("Use Dashboard for metrics, Workspace for saved findings, Exports for files.")
+        with action_col2:
+            st.link_button(
+                "📊 Dashboard",
+                "#dashboard",
+                use_container_width=True,
+            )
+
+        with action_col3:
+            st.link_button(
+                "📄 Exports",
+                "#exports",
+                use_container_width=True,
+            )
 
         show_audio_section()
         show_quiz_section(user_mode)
 
 
 with dashboard_tab:
+    st.markdown('<span id="dashboard"></span>', unsafe_allow_html=True)
     show_dashboard()
 
 
@@ -752,4 +1010,5 @@ with workspace_tab:
 
 
 with exports_tab:
+    st.markdown('<span id="exports"></span>', unsafe_allow_html=True)
     show_exports()
