@@ -1,6 +1,7 @@
 import re
 import tempfile
 from collections import Counter
+from datetime import datetime
 
 import streamlit as st
 from gtts import gTTS
@@ -21,9 +22,6 @@ st.caption("AI-powered multimodal research, learning, and decision-intelligence 
 
 
 def make_clickable_source_markers(answer, sources):
-    """
-    Converts [Source 1], [Source 2], etc. into clickable links.
-    """
     for i, src in enumerate(sources, start=1):
         url = src.get("url", "")
 
@@ -169,6 +167,83 @@ def show_research_dashboard(
         )
 
 
+def build_saved_research_markdown(saved_findings):
+    content = "# Agent ARCA Saved Research Collection\n\n"
+
+    if not saved_findings:
+        content += "No saved findings yet.\n"
+        return content
+
+    for i, item in enumerate(saved_findings, start=1):
+        content += f"## Finding {i}: {item['question']}\n\n"
+        content += f"**Mode:** {item['user_mode']}\n\n"
+        content += f"**Analysis Type:** {item['analysis_mode']}\n\n"
+        content += f"**Saved At:** {item['timestamp']}\n\n"
+        content += "### Answer\n\n"
+        content += f"{item['answer']}\n\n"
+
+        if item["sources"]:
+            content += "### Sources\n\n"
+            for j, src in enumerate(item["sources"], start=1):
+                content += f"{j}. **Source {j}: {src['source_name']}** — {src['title']}  \n"
+                content += f"   {src['url']}\n"
+
+        content += "\n---\n\n"
+
+    return content
+
+
+def show_saved_research_workspace():
+    st.divider()
+    st.subheader("🗂️ Research Workspace")
+
+    saved_count = len(st.session_state.saved_findings)
+
+    st.caption(
+        "Save important ARCA responses here while researching. You can download the full collection later."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Saved Findings", saved_count)
+
+    with col2:
+        if st.button("Clear Saved Findings", use_container_width=True):
+            st.session_state.saved_findings = []
+            st.rerun()
+
+    if saved_count == 0:
+        st.info("No saved findings yet. After ARCA generates an answer, click **Save This Finding**.")
+    else:
+        for i, item in enumerate(st.session_state.saved_findings, start=1):
+            with st.expander(f"Finding {i}: {item['question']}"):
+                st.markdown(f"**Mode:** {item['user_mode']}")
+                st.markdown(f"**Analysis:** {item['analysis_mode']}")
+                st.markdown(f"**Saved:** {item['timestamp']}")
+                st.markdown("### Answer")
+                st.markdown(item["answer"])
+
+                if item["sources"]:
+                    st.markdown("### Sources")
+                    for j, src in enumerate(item["sources"], start=1):
+                        st.markdown(
+                            f"{j}. **Source {j}: {src['source_name']}** — [{src['title']}]({src['url']})"
+                        )
+
+        markdown_file = build_saved_research_markdown(
+            st.session_state.saved_findings
+        )
+
+        st.download_button(
+            label="⬇️ Download Saved Research Collection",
+            data=markdown_file,
+            file_name="ARCA_Saved_Research_Collection.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -192,6 +267,9 @@ if "latest_user_mode" not in st.session_state:
 
 if "latest_analysis_mode" not in st.session_state:
     st.session_state.latest_analysis_mode = ""
+
+if "saved_findings" not in st.session_state:
+    st.session_state.saved_findings = []
 
 
 with st.sidebar:
@@ -463,12 +541,31 @@ if question:
 
 
 if st.session_state.latest_student_answer:
+    if st.button("⭐ Save This Finding to Research Workspace"):
+        st.session_state.saved_findings.append(
+            {
+                "question": st.session_state.latest_question,
+                "answer": st.session_state.latest_student_answer,
+                "sources": st.session_state.latest_sources,
+                "user_mode": st.session_state.latest_user_mode,
+                "analysis_mode": st.session_state.latest_analysis_mode,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+
+        st.success("Saved to Research Workspace.")
+
+
+if st.session_state.latest_student_answer:
     show_research_dashboard(
         answer=st.session_state.latest_student_answer,
         sources=st.session_state.latest_sources,
         user_mode=st.session_state.latest_user_mode,
         analysis_mode=st.session_state.latest_analysis_mode,
     )
+
+
+show_saved_research_workspace()
 
 
 if (
