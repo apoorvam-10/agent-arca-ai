@@ -1,8 +1,10 @@
 from typing import List, Dict, Any
 import re
 import os
+import time
 import tempfile
 from io import BytesIO
+from urllib.parse import urlparse
 
 import fitz
 import requests
@@ -15,7 +17,9 @@ import webvtt
 import yt_dlp
 
 from docx import Document
+from docx.shared import Pt
 from pptx import Presentation
+from pptx.util import Pt as PPTPt
 
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
@@ -39,9 +43,22 @@ TRUSTED_DOMAINS = [
     ".gov",
 ]
 
+MEDIUM_TRUST_DOMAINS = [
+    "ibm.com",
+    "microsoft.com",
+    "google.com",
+    "aws.amazon.com",
+    "cloud.google.com",
+    "openai.com",
+    "wikipedia.org",
+    "youtube.com",
+    "youtu.be",
+]
+
 
 def get_gemini_model():
     api_key = st.secrets.get("GEMINI_API_KEY", "")
+
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY in Streamlit secrets.")
 
@@ -63,10 +80,20 @@ def safe_generate_content(prompt: str) -> str:
     except Exception as e:
         error_text = str(e)
 
-        if "429" in error_text or "ResourceExhausted" in error_text or "quota" in error_text.lower():
+        if (
+            "429" in error_text
+            or "ResourceExhausted" in error_text
+            or "quota" in error_text.lower()
+        ):
             return (
                 "⚠️ Gemini API quota limit reached. Please wait 1–2 minutes and try again. "
                 "This usually happens on the free tier after several requests."
+            )
+
+        if "403" in error_text or "leaked" in error_text.lower():
+            return (
+                "⚠️ Gemini API key issue detected. Your API key may be invalid, blocked, or exposed. "
+                "Please create a new key and update Streamlit secrets."
             )
 
         return f"⚠️ AI generation failed. Please try again. Technical detail: {error_text[:300]}"
@@ -86,18 +113,38 @@ def safe_generate_multimodal_content(parts: list) -> str:
     except Exception as e:
         error_text = str(e)
 
-        if "429" in error_text or "ResourceExhausted" in error_text or "quota" in error_text.lower():
+        if (
+            "429" in error_text
+            or "ResourceExhausted" in error_text
+            or "quota" in error_text.lower()
+        ):
             return "Gemini quota reached while reading image. Please wait 1–2 minutes and try again."
+
+        if "403" in error_text or "leaked" in error_text.lower():
+            return "Gemini API key issue detected while reading image. Please update your API key."
 
         return f"Image reading failed. Technical detail: {error_text[:300]}"
 
 
 def get_tavily_client():
     api_key = st.secrets.get("TAVILY_API_KEY", "")
+
     if not api_key:
         raise ValueError("Missing TAVILY_API_KEY in Streamlit secrets.")
 
     return TavilyClient(api_key=api_key)
+
+
+def get_domain(url: str) -> str:
+    try:
+        if not url or not url.startswith("http"):
+            return "uploaded-file"
+
+        parsed = urlparse(url)
+        return parsed.netloc.lower().replace("www.", "")
+
+    except Exception:
+        return "unknown"
 
 
 def get_source_name(url: str, title: str = "") -> str:
@@ -125,6 +172,7 @@ def get_source_name(url: str, title: str = "") -> str:
         }
 
         return known_names.get(name.lower(), name.upper())
+
     except Exception:
         return title[:20] if title else "Source"
 
@@ -134,8 +182,131 @@ def is_trusted_url(url: str) -> bool:
         return True
 
     lowered_url = url.lower()
-
     return any(domain in lowered_url for domain in TRUSTED_DOMAINS)
+
+
+def rate_source_reliability(source: Dict[str, Any]) -> Dict[str, Any]:
+    source_type = source.get("type", "unknown")
+    url = source.get("url", "")
+    domain = get_domain(url)
+
+    if source_type in ["pdf", "docx", "image"]:
+        return {
+            "label": "User-provided source",
+            "score": 80,
+            "reason": "Uploaded directly by the user; useful but should still be checked for origin and accuracy.",
+        }
+
+    if any(domain.endswith(d) or d in domain for d in TRUSTED_DOMAINS):
+        return {
+            "label": "High trust",
+            "score": 95,
+            "reason": "Academic, government, medical, or research-oriented source.",
+        }
+
+    if any(d in domain for d in MEDIUM_TRUST_DOMAINS):
+        return {
+            "label": "Moderate trust",
+            "score": 75,
+            "reason": "Recognized organization or platform, but claims should still be verified.",
+        }
+
+    if source_type in ["web_search", "url"]:
+        return {
+            "label": "Needs review",
+            "score": 60,
+            "reason": "Web source; reliability depends on publisher, evidence, and author credibility.",
+        }
+
+    return {
+        "label": "Unknown",
+        "score": 50,
+        "reason": "Reliability could not be determined automatically.",
+    }
+
+
+def enrich_sources_with_reliability(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched_sources = []
+
+    for source in sources:
+        reliability = rate_source_reliability(source)
+
+        enriched_sources.append(
+            {
+                **source,
+                "reliability_label": reliability["label"],
+                "reliability_score": reliability["score"],
+                "reliability_reason": reliability["reason"],
+                "domain": get_domain(source.get("url", "")),
+            }
+        )
+
+    return enriched_sources
+
+
+def rank_sources_by_reliability(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched_sources = enrich_sources_with_reliability(sources)
+
+    return sorted(
+        enriched_sources,
+        key=lambda src: src.get("reliability_score", 0),
+        reverse=True,
+    )
+
+
+def compute_overall_trust_score(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not sources:
+        return {
+            "score": 0,
+            "label": "No sources",
+            "message": "No sources available for trust scoring.",
+        }
+
+    scores = [
+        source.get("reliability_score", rate_source_reliability(source)["score"])
+        for source in sources
+    ]
+
+    avg_score = round(sum(scores) / len(scores))
+
+    if avg_score >= 85:
+        label = "Strong"
+        message = "The response is supported by generally strong sources."
+    elif avg_score >= 70:
+        label = "Moderate"
+        message = "The response has decent support, but some claims should be verified."
+    elif avg_score >= 50:
+        label = "Limited"
+        message = "The response uses sources that need careful review."
+    else:
+        label = "Weak"
+        message = "The response has weak or insufficient source support."
+
+    return {
+        "score": avg_score,
+        "label": label,
+        "message": message,
+    }
+
+
+def estimate_token_usage(text: str) -> int:
+    if not text:
+        return 0
+
+    return max(1, round(len(text.split()) * 1.3))
+
+
+def estimate_workflow_cost(input_tokens: int, output_tokens: int) -> str:
+    total_tokens = input_tokens + output_tokens
+
+    if total_tokens < 5000:
+        return "Very low"
+    if total_tokens < 15000:
+        return "Low"
+    if total_tokens < 30000:
+        return "Medium"
+
+    return "High"
 
 
 def get_youtube_video_id(url: str) -> str:
@@ -165,7 +336,11 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
         }
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            languages=["en"],
+        )
+
         text = " ".join([item["text"] for item in transcript])
 
         if text.strip():
@@ -176,6 +351,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
                 "text": text[:15000],
                 "type": "video",
             }
+
     except Exception:
         pass
 
@@ -241,16 +417,30 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
 def fetch_url_text(url: str) -> Dict[str, Any]:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=15)
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=15,
+        )
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
-        title = soup.title.string.strip() if soup.title and soup.title.string else url
+
+        title = (
+            soup.title.string.strip()
+            if soup.title and soup.title.string
+            else url
+        )
 
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
 
-        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
+        paragraphs = [
+            p.get_text(" ", strip=True)
+            for p in soup.find_all("p")
+        ]
+
         text = " ".join(p for p in paragraphs if p)
 
         if not text:
@@ -277,9 +467,14 @@ def fetch_url_text(url: str) -> Dict[str, Any]:
 def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
     try:
         pdf_bytes = uploaded_pdf.read()
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        doc = fitz.open(
+            stream=pdf_bytes,
+            filetype="pdf",
+        )
 
         text = "\n".join([page.get_text() for page in doc])
+
         title = uploaded_pdf.name
 
         source_name = (
@@ -310,10 +505,17 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
 def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
     try:
         doc = Document(uploaded_docx)
-        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+
+        paragraphs = [
+            para.text
+            for para in doc.paragraphs
+            if para.text.strip()
+        ]
+
         text = "\n".join(paragraphs)
 
         title = uploaded_docx.name
+
         source_name = (
             title.replace(".docx", "")
             .replace("_", " ")
@@ -368,6 +570,7 @@ Return concise but complete extracted content.
         )
 
         title = uploaded_image.name
+
         source_name = (
             title.replace(".png", "")
             .replace(".jpg", "")
@@ -441,6 +644,106 @@ def search_web(
     return all_sources
 
 
+def find_reference_images(
+    query: str,
+    max_images: int = 6,
+    prefer_trusted_sources: bool = True,
+) -> List[Dict[str, str]]:
+    try:
+        client = get_tavily_client()
+
+        search_result = client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=5,
+            include_answer=False,
+            include_images=True,
+            include_image_descriptions=True,
+        )
+
+        image_items = []
+
+        top_level_images = search_result.get("images", [])
+
+        for image in top_level_images:
+            if isinstance(image, dict):
+                image_url = image.get("url", "")
+                description = image.get("description", "")
+            else:
+                image_url = str(image)
+                description = ""
+
+            if image_url:
+                image_items.append(
+                    {
+                        "image_url": image_url,
+                        "source_url": image_url,
+                        "description": description or "Reference image related to the research topic.",
+                    }
+                )
+
+        for result in search_result.get("results", []):
+            result_url = result.get("url", "")
+            result_title = result.get("title", "Source")
+            result_images = result.get("images", [])
+
+            for image in result_images:
+                if isinstance(image, dict):
+                    image_url = image.get("url", "")
+                    description = image.get("description", "")
+                else:
+                    image_url = str(image)
+                    description = ""
+
+                if not image_url:
+                    continue
+
+                if prefer_trusted_sources and result_url.startswith("http"):
+                    if not is_trusted_url(result_url):
+                        continue
+
+                image_items.append(
+                    {
+                        "image_url": image_url,
+                        "source_url": result_url,
+                        "description": description or result_title,
+                    }
+                )
+
+        unique_images = []
+        seen_urls = set()
+
+        for item in image_items:
+            image_url = item["image_url"]
+
+            if image_url in seen_urls:
+                continue
+
+            seen_urls.add(image_url)
+            unique_images.append(item)
+
+            if len(unique_images) >= max_images:
+                break
+
+        if not unique_images and prefer_trusted_sources:
+            return find_reference_images(
+                query=query,
+                max_images=max_images,
+                prefer_trusted_sources=False,
+            )
+
+        return unique_images
+
+    except Exception as e:
+        return [
+            {
+                "image_url": "",
+                "source_url": "",
+                "description": f"Image search failed: {str(e)[:200]}",
+            }
+        ]
+
+
 def build_prompt(
     question: str,
     sources: List[Dict[str, Any]],
@@ -459,6 +762,8 @@ Source name: {src["source_name"]}
 Title: {src["title"]}
 URL: {src["url"]}
 Type: {src["type"]}
+Reliability: {src.get("reliability_label", "Unknown")} ({src.get("reliability_score", "N/A")}/100)
+Reliability reason: {src.get("reliability_reason", "Not available")}
 Content:
 {src["text"]}
 """
@@ -502,6 +807,7 @@ Citation and evidence rules:
 - Use the exact format [Source 1], [Source 2], etc.
 - Only cite a source if that source actually supports the claim.
 - Do not cite every sentence; cite important claims, comparisons, risks, numbers, and conclusions.
+- Prefer higher reliability sources when sources disagree.
 - If evidence is weak or missing, say that clearly.
 - Do not invent source numbers.
 """
@@ -600,6 +906,7 @@ Your job:
 - Do not invent facts.
 - Keep the answer structured and easy to read.
 - If Compare & Verify mode is active, compare sources against each other.
+- Prefer stronger sources over weaker sources when forming conclusions.
 
 User question:
 {question}
@@ -679,6 +986,38 @@ def make_paragraph_safe(text: str) -> str:
     return text
 
 
+def extract_bullet_points(answer: str, max_points: int = 8) -> List[str]:
+    cleaned = clean_export_text(answer)
+    lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+
+    bullets = []
+    skip_starts = [
+        "key takeaway",
+        "answer",
+        "simple summary",
+        "evidence map",
+        "what i verified",
+        "limits",
+        "suggested",
+        "recommended",
+        "quiz",
+        "areas to focus",
+    ]
+
+    for line in lines:
+        lowered = line.lower()
+
+        if any(lowered.startswith(skip) for skip in skip_starts):
+            continue
+
+        if len(line) < 4:
+            continue
+
+        bullets.append(line)
+
+    return bullets[:max_points] if bullets else ["No findings available."]
+
+
 def generate_word_report(
     question: str,
     answer: str,
@@ -689,59 +1028,66 @@ def generate_word_report(
 ):
     clean_answer = clean_export_text(answer)
     clean_feedback = clean_export_text(quiz_feedback) if quiz_feedback else ""
+    trust = compute_overall_trust_score(sources)
 
     doc = Document()
 
-    doc.add_heading("Agent ARCA Research Report", level=0)
+    normal_style = doc.styles["Normal"]
+    normal_style.font.name = "Calibri"
+    normal_style.font.size = Pt(11)
 
-    doc.add_paragraph(
-        "Generated by Agent ARCA — an AI-powered multimodal research, learning, and decision-intelligence assistant."
-    )
+    title = doc.add_heading("Agent ARCA Research Report", level=0)
+    title.alignment = 1
 
-    doc.add_heading("Report Overview", level=1)
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = 1
+    subtitle.add_run(
+        "AI-powered multimodal research, learning, and decision-intelligence assistant"
+    ).italic = True
+
+    doc.add_paragraph("")
+
+    doc.add_heading("Executive Overview", level=1)
+    doc.add_paragraph(f"Question: {question}")
     doc.add_paragraph(f"Mode: {user_mode}")
     doc.add_paragraph(f"Analysis Type: {analysis_mode}")
     doc.add_paragraph(f"Sources Used: {len(sources)}")
+    doc.add_paragraph(f"Overall Trust Score: {trust['score']}/100 ({trust['label']})")
 
-    doc.add_heading("Research Question", level=1)
-    doc.add_paragraph(question)
-
-    doc.add_heading("Generated Findings", level=1)
+    doc.add_heading("Research Findings", level=1)
     doc.add_paragraph(clean_answer)
+
+    doc.add_heading("Key Highlights", level=1)
+    for point in extract_bullet_points(answer, max_points=6):
+        doc.add_paragraph(point, style="List Bullet")
 
     if clean_feedback:
         doc.add_heading("Student Quiz Feedback", level=1)
         doc.add_paragraph(clean_feedback)
 
-    doc.add_heading("Research Dashboard", level=1)
-    doc.add_paragraph(f"Source Count: {len(sources)}")
-    doc.add_paragraph(f"Answer Length: {len(answer.split())} words")
-
-    source_types = {}
-    for src in sources:
-        source_types[src["type"]] = source_types.get(src["type"], 0) + 1
-
-    for source_type, count in source_types.items():
-        doc.add_paragraph(f"{source_type}: {count}")
-
     doc.add_heading("Sources Used", level=1)
-
     for i, src in enumerate(sources, start=1):
         p = doc.add_paragraph(style="List Bullet")
         p.add_run(f"Source {i}: {src['source_name']} — ").bold = True
         p.add_run(src["title"])
         p.add_run(f"\n{src['url']}")
+        p.add_run(
+            f"\nReliability: {src.get('reliability_label', 'Unknown')} "
+            f"({src.get('reliability_score', 'N/A')}/100)"
+        )
 
-    doc.add_heading("Suggested Next Steps", level=1)
-    doc.add_paragraph("1. Review the generated findings.")
-    doc.add_paragraph("2. Open and verify the listed sources.")
-    doc.add_paragraph("3. Ask follow-up questions in ARCA.")
-    doc.add_paragraph("4. Export a presentation deck if needed.")
+    doc.add_heading("Recommended Next Steps", level=1)
+    for step in [
+        "Review the generated findings and summary.",
+        "Verify important claims using the listed sources.",
+        "Ask follow-up questions in ARCA for deeper analysis.",
+        "Export a deck or report for sharing or presentation.",
+    ]:
+        doc.add_paragraph(step, style="List Number")
 
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-
     return buffer
 
 
@@ -758,35 +1104,40 @@ def generate_pdf_report(
 
     styles = getSampleStyleSheet()
     story = []
+    trust = compute_overall_trust_score(sources)
 
     clean_answer = make_paragraph_safe(answer)
     clean_feedback = make_paragraph_safe(quiz_feedback) if quiz_feedback else ""
 
     story.append(Paragraph("Agent ARCA Research Report", styles["Title"]))
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
+    story.append(
+        Paragraph(
+            "AI-powered multimodal research, learning, and decision-intelligence assistant",
+            styles["BodyText"],
+        )
+    )
+    story.append(Spacer(1, 16))
 
-    story.append(Paragraph(
-        "Generated by Agent ARCA — an AI-powered multimodal research, learning, and decision-intelligence assistant.",
-        styles["BodyText"],
-    ))
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("Report Overview", styles["Heading1"]))
+    story.append(Paragraph("Executive Overview", styles["Heading1"]))
+    story.append(Paragraph(f"Question: {make_paragraph_safe(question)}", styles["BodyText"]))
     story.append(Paragraph(f"Mode: {user_mode}", styles["BodyText"]))
     story.append(Paragraph(f"Analysis Type: {analysis_mode}", styles["BodyText"]))
     story.append(Paragraph(f"Sources Used: {len(sources)}", styles["BodyText"]))
+    story.append(Paragraph(f"Trust Score: {trust['score']}/100 ({trust['label']})", styles["BodyText"]))
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Research Question", styles["Heading1"]))
-    story.append(Paragraph(make_paragraph_safe(question), styles["BodyText"]))
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("Generated Findings", styles["Heading1"]))
-
+    story.append(Paragraph("Research Findings", styles["Heading1"]))
     for paragraph in clean_answer.split("\n"):
         if paragraph.strip():
             story.append(Paragraph(paragraph.strip(), styles["BodyText"]))
             story.append(Spacer(1, 6))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Key Highlights", styles["Heading1"]))
+    for point in extract_bullet_points(answer, max_points=6):
+        story.append(Paragraph(f"• {make_paragraph_safe(point)}", styles["BodyText"]))
+        story.append(Spacer(1, 4))
 
     if clean_feedback:
         story.append(PageBreak())
@@ -797,35 +1148,30 @@ def generate_pdf_report(
                 story.append(Spacer(1, 6))
 
     story.append(PageBreak())
-    story.append(Paragraph("Research Dashboard", styles["Heading1"]))
-    story.append(Paragraph(f"Source Count: {len(sources)}", styles["BodyText"]))
-    story.append(Paragraph(f"Answer Length: {len(answer.split())} words", styles["BodyText"]))
-    story.append(Spacer(1, 12))
-
-    source_types = {}
-    for src in sources:
-        source_types[src["type"]] = source_types.get(src["type"], 0) + 1
-
-    for source_type, count in source_types.items():
-        story.append(Paragraph(f"{source_type}: {count}", styles["BodyText"]))
-
-    story.append(Spacer(1, 12))
     story.append(Paragraph("Sources Used", styles["Heading1"]))
-
     for i, src in enumerate(sources, start=1):
-        source_text = f"Source {i}: {src['source_name']} — {src['title']}<br/>{src['url']}"
+        source_text = (
+            f"Source {i}: {src['source_name']} — {src['title']}<br/>"
+            f"{src['url']}<br/>"
+            f"Reliability: {src.get('reliability_label', 'Unknown')} "
+            f"({src.get('reliability_score', 'N/A')}/100)"
+        )
         story.append(Paragraph(make_paragraph_safe(source_text), styles["BodyText"]))
         story.append(Spacer(1, 8))
 
-    story.append(Paragraph("Suggested Next Steps", styles["Heading1"]))
-    story.append(Paragraph("1. Review the generated findings.", styles["BodyText"]))
-    story.append(Paragraph("2. Open and verify the listed sources.", styles["BodyText"]))
-    story.append(Paragraph("3. Ask follow-up questions in ARCA.", styles["BodyText"]))
-    story.append(Paragraph("4. Export a presentation deck if needed.", styles["BodyText"]))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("Recommended Next Steps", styles["Heading1"]))
+    for step in [
+        "Review the generated findings and summary.",
+        "Verify important claims using the listed sources.",
+        "Ask follow-up questions in ARCA for deeper analysis.",
+        "Export a deck or report for sharing or presentation.",
+    ]:
+        story.append(Paragraph(f"• {step}", styles["BodyText"]))
+        story.append(Spacer(1, 4))
 
     doc.build(story)
     buffer.seek(0)
-
     return buffer
 
 
@@ -842,11 +1188,8 @@ def generate_powerpoint_deck(
     title_slide_layout = prs.slide_layouts[0]
     content_slide_layout = prs.slide_layouts[1]
 
-    clean_answer = clean_export_text(answer)
-    clean_feedback = clean_export_text(quiz_feedback) if quiz_feedback else ""
-
-    lines = [line.strip() for line in clean_answer.split("\n") if line.strip()]
-    summary_lines = lines[:8] if lines else ["No findings available."]
+    trust = compute_overall_trust_score(sources)
+    summary_points = extract_bullet_points(answer, max_points=6)
 
     slide = prs.slides.add_slide(title_slide_layout)
     slide.shapes.title.text = "Agent ARCA Research Deck"
@@ -857,46 +1200,227 @@ def generate_powerpoint_deck(
     slide.placeholders[1].text = question
 
     slide = prs.slides.add_slide(content_slide_layout)
-    slide.shapes.title.text = "Key Findings"
-    slide.placeholders[1].text = "\n".join(summary_lines[:8])
+    slide.shapes.title.text = "Executive Summary"
+    tf = slide.placeholders[1].text_frame
+    tf.clear()
+
+    for i, point in enumerate(summary_points[:5]):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.text = point
+        p.level = 0
+        p.font.size = PPTPt(18)
 
     slide = prs.slides.add_slide(content_slide_layout)
-    slide.shapes.title.text = "Research Dashboard"
+    slide.shapes.title.text = "Research Quality Snapshot"
     slide.placeholders[1].text = (
-        f"Sources used: {len(sources)}\n"
-        f"Answer length: {len(answer.split())} words\n"
+        f"Sources Used: {len(sources)}\n"
+        f"Trust Score: {trust['score']}/100 ({trust['label']})\n"
         f"Mode: {user_mode}\n"
-        f"Analysis: {analysis_mode}"
+        f"Analysis Type: {analysis_mode}"
     )
 
     source_lines = []
     for i, src in enumerate(sources, start=1):
-        source_lines.append(f"Source {i}: {src['source_name']} — {src['title']}")
+        source_lines.append(
+            f"Source {i}: {src['source_name']} — "
+            f"{src.get('reliability_label', 'Unknown')}"
+        )
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Sources Used"
     slide.placeholders[1].text = "\n".join(source_lines[:10]) if source_lines else "No sources available."
 
-    if clean_feedback:
-        feedback_lines = [line.strip() for line in clean_feedback.split("\n") if line.strip()]
+    if quiz_feedback:
+        feedback_points = extract_bullet_points(quiz_feedback, max_points=6)
         slide = prs.slides.add_slide(content_slide_layout)
-        slide.shapes.title.text = "Quiz Feedback"
-        slide.placeholders[1].text = "\n".join(feedback_lines[:8])
+        slide.shapes.title.text = "Student Quiz Feedback"
+        slide.placeholders[1].text = "\n".join(feedback_points)
 
     slide = prs.slides.add_slide(content_slide_layout)
-    slide.shapes.title.text = "Next Steps"
+    slide.shapes.title.text = "Recommended Next Steps"
     slide.placeholders[1].text = (
-        "1. Review findings.\n"
-        "2. Verify sources.\n"
-        "3. Ask follow-up questions.\n"
-        "4. Use report or deck for study/work."
+        "1. Review the findings.\n"
+        "2. Verify critical claims using the source slide.\n"
+        "3. Ask follow-up questions in ARCA.\n"
+        "4. Use this deck for study, reporting, or discussion."
     )
 
     buffer = BytesIO()
     prs.save(buffer)
     buffer.seek(0)
-
     return buffer
+
+
+def clean_graphviz_output(text: str) -> str:
+    text = text.strip()
+
+    fenced = re.search(r"```(?:dot)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+
+    return text
+
+
+def default_flowchart_dot() -> str:
+    return """
+digraph G {
+    rankdir=LR;
+    node [shape=box, style=rounded];
+    n1 [label="Research Question"];
+    n2 [label="Gather Sources"];
+    n3 [label="Analyze Evidence"];
+    n4 [label="Summarize Findings"];
+    n5 [label="Provide Answer"];
+    n1 -> n2 -> n3 -> n4 -> n5;
+}
+""".strip()
+
+
+def default_tree_dot() -> str:
+    return """
+digraph G {
+    rankdir=TB;
+    node [shape=box, style=rounded];
+    root [label="Main Topic"];
+    a [label="Subtopic 1"];
+    b [label="Subtopic 2"];
+    c [label="Subtopic 3"];
+    a1 [label="Detail A"];
+    b1 [label="Detail B"];
+    c1 [label="Detail C"];
+    root -> a;
+    root -> b;
+    root -> c;
+    a -> a1;
+    b -> b1;
+    c -> c1;
+}
+""".strip()
+
+
+def generate_visual_assets(
+    question: str,
+    answer: str,
+    user_mode: str,
+    analysis_mode: str,
+    max_reference_images: int = 6,
+    prefer_trusted_sources: bool = True,
+) -> Dict[str, Any]:
+    flowchart_prompt = f"""
+You are generating a Graphviz DOT flowchart for a research assistant app.
+
+Based on this question and answer, create a simple professional flowchart showing the logic or process.
+
+Rules:
+- Return ONLY valid Graphviz DOT code.
+- Use digraph G.
+- Use max 8 nodes.
+- Use short labels.
+- Use rankdir=LR.
+- Use node [shape=box, style=rounded].
+- Do not return markdown fences.
+- Do not explain anything.
+
+Question:
+{question}
+
+Answer:
+{answer}
+""".strip()
+
+    tree_prompt = f"""
+You are generating a Graphviz DOT tree diagram.
+
+Based on this question and answer, create a simple professional tree diagram that organizes the topic into main branches and sub-branches.
+
+Rules:
+- Return ONLY valid Graphviz DOT code.
+- Use digraph G.
+- Use max 10 nodes.
+- Use short labels.
+- Use rankdir=TB.
+- Use node [shape=box, style=rounded].
+- Do not return markdown fences.
+- Do not explain anything.
+
+Question:
+{question}
+
+Answer:
+{answer}
+""".strip()
+
+    image_prompt_request = f"""
+Create one strong professional descriptive image prompt based on this research answer.
+
+The prompt should be suitable for generating:
+- an infographic
+- conceptual illustration
+- presentation visual
+- educational or professional summary image
+
+Include:
+- subject
+- layout
+- main visual elements
+- tone/style
+- color mood
+- what text/captions should appear if needed
+
+Return only the final image prompt text.
+
+Question:
+{question}
+
+Mode:
+{user_mode}
+
+Analysis Mode:
+{analysis_mode}
+
+Answer:
+{answer}
+""".strip()
+
+    visual_search_query_prompt = f"""
+Create a short web image search query for finding helpful reference images, diagrams, charts, or educational visuals for this research topic.
+
+Return only the search query.
+
+Question:
+{question}
+
+Answer:
+{answer}
+""".strip()
+
+    flowchart_response = clean_graphviz_output(safe_generate_content(flowchart_prompt))
+    tree_response = clean_graphviz_output(safe_generate_content(tree_prompt))
+    image_prompt_response = safe_generate_content(image_prompt_request).strip()
+    visual_search_query = safe_generate_content(visual_search_query_prompt).strip()
+
+    if not visual_search_query or visual_search_query.startswith("⚠️"):
+        visual_search_query = question
+
+    if not flowchart_response.lower().startswith("digraph"):
+        flowchart_response = default_flowchart_dot()
+
+    if not tree_response.lower().startswith("digraph"):
+        tree_response = default_tree_dot()
+
+    reference_images = find_reference_images(
+        query=visual_search_query,
+        max_images=max_reference_images,
+        prefer_trusted_sources=prefer_trusted_sources,
+    )
+
+    return {
+        "flowchart_dot": flowchart_response,
+        "tree_dot": tree_response,
+        "image_prompt": image_prompt_response,
+        "visual_search_query": visual_search_query,
+        "reference_images": reference_images,
+    }
 
 
 def run_pipeline(
@@ -913,6 +1437,7 @@ def run_pipeline(
     max_web_results: int = 5,
     prefer_trusted_sources: bool = False,
 ) -> Dict[str, Any]:
+    start_time = time.time()
     all_sources = []
 
     if mode in ["Use my sources", "Use my sources + web search"]:
@@ -948,19 +1473,29 @@ def run_pipeline(
             )
         )
 
+    ranked_sources = rank_sources_by_reliability(all_sources)
+
     prompt = build_prompt(
         question=question,
-        sources=all_sources,
+        sources=ranked_sources,
         previous_context=previous_context or "",
         chat_history=chat_history or [],
         user_mode=user_mode,
         analysis_mode=analysis_mode,
     )
 
+    input_tokens_estimate = estimate_token_usage(prompt)
     answer = safe_generate_content(prompt)
+    output_tokens_estimate = estimate_token_usage(answer)
+
+    response_time_seconds = round(time.time() - start_time, 2)
+    trust = compute_overall_trust_score(ranked_sources)
+    workflow_type = f"{user_mode} | {analysis_mode} | {mode}"
 
     new_context = f"""
 Last question: {question}
+
+Workflow: {workflow_type}
 
 Analysis mode: {analysis_mode}
 
@@ -968,7 +1503,7 @@ Last answer:
 {answer[:3000]}
 
 Sources used:
-{", ".join([src["source_name"] for src in all_sources])}
+{", ".join([src["source_name"] for src in ranked_sources])}
 """.strip()
 
     return {
@@ -979,9 +1514,28 @@ Sources used:
                 "source_name": src["source_name"],
                 "url": src["url"],
                 "type": src["type"],
+                "domain": src.get("domain", ""),
+                "reliability_label": src.get("reliability_label", "Unknown"),
+                "reliability_score": src.get("reliability_score", 0),
+                "reliability_reason": src.get("reliability_reason", ""),
             }
-            for src in all_sources
+            for src in ranked_sources
         ],
         "context": new_context,
-        "evaluation": evaluate_answer(answer, len(all_sources)),
+        "evaluation": evaluate_answer(answer, len(ranked_sources)),
+        "metadata": {
+            "response_time_seconds": response_time_seconds,
+            "input_tokens_estimate": input_tokens_estimate,
+            "output_tokens_estimate": output_tokens_estimate,
+            "total_tokens_estimate": input_tokens_estimate + output_tokens_estimate,
+            "estimated_cost_level": estimate_workflow_cost(
+                input_tokens_estimate,
+                output_tokens_estimate,
+            ),
+            "workflow_type": workflow_type,
+            "trust_score": trust["score"],
+            "trust_label": trust["label"],
+            "trust_message": trust["message"],
+            "source_count": len(ranked_sources),
+        },
     }
