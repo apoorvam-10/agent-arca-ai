@@ -516,6 +516,27 @@ with st.sidebar:
 
     st.divider()
 
+    st.header("Web Search Controls")
+
+    max_web_results = st.slider(
+        "Number of web sources",
+        min_value=2,
+        max_value=10,
+        value=5,
+    )
+
+    prefer_trusted_sources = st.checkbox(
+        "Prefer trusted sources",
+        value=True,
+        help="Prioritizes sources like .gov, .edu, NIH, NCBI, CDC, WHO, arXiv, IEEE, ACM, Nature, and ScienceDirect when available.",
+    )
+
+    st.caption(
+        "Use fewer sources for faster answers. Use more sources for deeper research."
+    )
+
+    st.divider()
+
     if st.button("Clear Chat"):
         st.session_state.chat_history = []
         st.session_state.research_context = None
@@ -625,6 +646,8 @@ if question:
                     )
                     for item in st.session_state.chat_history
                 ],
+                max_web_results=max_web_results,
+                prefer_trusted_sources=prefer_trusted_sources,
             )
 
         st.session_state.research_context = (

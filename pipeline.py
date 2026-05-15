@@ -22,6 +22,24 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet
 
 
+TRUSTED_DOMAINS = [
+    "nih.gov",
+    "ncbi.nlm.nih.gov",
+    "pmc.ncbi.nlm.nih.gov",
+    "cdc.gov",
+    "who.int",
+    "fda.gov",
+    "nature.com",
+    "sciencedirect.com",
+    "springer.com",
+    "ieee.org",
+    "acm.org",
+    "arxiv.org",
+    ".edu",
+    ".gov",
+]
+
+
 def get_gemini_model():
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -109,6 +127,15 @@ def get_source_name(url: str, title: str = "") -> str:
         return known_names.get(name.lower(), name.upper())
     except Exception:
         return title[:20] if title else "Source"
+
+
+def is_trusted_url(url: str) -> bool:
+    if not url or not url.startswith("http"):
+        return True
+
+    lowered_url = url.lower()
+
+    return any(domain in lowered_url for domain in TRUSTED_DOMAINS)
 
 
 def get_youtube_video_id(url: str) -> str:
@@ -368,7 +395,11 @@ Return concise but complete extracted content.
         }
 
 
-def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+def search_web(
+    query: str,
+    max_results: int = 5,
+    prefer_trusted_sources: bool = False,
+) -> List[Dict[str, Any]]:
     client = get_tavily_client()
 
     search_result = client.search(
@@ -379,14 +410,14 @@ def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         include_raw_content=True,
     )
 
-    sources = []
+    all_sources = []
 
     for item in search_result.get("results", []):
         title = item.get("title") or item.get("url", "Untitled Source")
         url = item.get("url", "")
         content = item.get("raw_content") or item.get("content") or ""
 
-        sources.append(
+        all_sources.append(
             {
                 "title": title,
                 "source_name": get_source_name(url, title),
@@ -396,7 +427,18 @@ def search_web(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
             }
         )
 
-    return sources
+    if not prefer_trusted_sources:
+        return all_sources
+
+    trusted_sources = [
+        src for src in all_sources
+        if is_trusted_url(src.get("url", ""))
+    ]
+
+    if trusted_sources:
+        return trusted_sources
+
+    return all_sources
 
 
 def build_prompt(
@@ -868,6 +910,8 @@ def run_pipeline(
     analysis_mode: str,
     previous_context: str = None,
     chat_history: List[Any] = None,
+    max_web_results: int = 5,
+    prefer_trusted_sources: bool = False,
 ) -> Dict[str, Any]:
     all_sources = []
 
@@ -896,7 +940,13 @@ def run_pipeline(
     )
 
     if should_search_web:
-        all_sources.extend(search_web(question))
+        all_sources.extend(
+            search_web(
+                query=question,
+                max_results=max_web_results,
+                prefer_trusted_sources=prefer_trusted_sources,
+            )
+        )
 
     prompt = build_prompt(
         question=question,
