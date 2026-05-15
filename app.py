@@ -27,7 +27,7 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.1rem;
+        padding-top: 1rem;
         padding-bottom: 1rem;
         max-width: 1180px;
     }
@@ -37,7 +37,7 @@ st.markdown(
     }
 
     div[data-testid="stVerticalBlock"] {
-        gap: 0.5rem;
+        gap: 0.45rem;
     }
 
     .arca-hero {
@@ -45,7 +45,7 @@ st.markdown(
         border: 1px solid rgba(120,120,120,0.25);
         border-radius: 18px;
         background: linear-gradient(135deg, rgba(120,120,255,0.08), rgba(120,255,220,0.05));
-        margin-bottom: 0.8rem;
+        margin-bottom: 0.65rem;
     }
 
     .arca-title {
@@ -55,7 +55,7 @@ st.markdown(
     }
 
     .arca-subtitle {
-        color: rgba(120,120,120,0.95);
+        color: rgba(150,150,150,0.95);
         font-size: 1rem;
     }
 
@@ -64,7 +64,7 @@ st.markdown(
         border: 1px solid rgba(120,120,120,0.22);
         border-radius: 16px;
         background: rgba(250,250,250,0.03);
-        min-height: 105px;
+        min-height: 95px;
     }
 
     .arca-card-title {
@@ -74,7 +74,7 @@ st.markdown(
     }
 
     .arca-card-text {
-        color: rgba(120,120,120,0.95);
+        color: rgba(150,150,150,0.95);
         font-size: 0.9rem;
     }
 
@@ -97,8 +97,13 @@ st.markdown(
         margin-top: 0.4rem;
     }
 
+    .input-wrap {
+        padding: 0.55rem 0;
+        margin-top: 0.3rem;
+    }
+
     .small-muted {
-        color: rgba(120,120,120,0.95);
+        color: rgba(150,150,150,0.95);
         font-size: 0.86rem;
     }
 
@@ -112,13 +117,17 @@ st.markdown(
     }
 
     h1, h2, h3 {
-        margin-top: 0.3rem;
+        margin-top: 0.25rem;
         margin-bottom: 0.35rem;
     }
 
     hr {
         margin-top: 0.7rem;
         margin-bottom: 0.7rem;
+    }
+
+    button[kind="secondary"] {
+        border-radius: 12px !important;
     }
     </style>
     """,
@@ -149,6 +158,7 @@ def clean_text_for_audio(text):
     text = text.replace("*", "")
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text).strip()
+
     return text[:2500]
 
 
@@ -167,6 +177,7 @@ def create_audio_file(text):
         )
 
         tts.save(temp_file.name)
+
         return temp_file.name
 
     except Exception:
@@ -405,6 +416,26 @@ def show_hero():
     )
 
 
+def apply_quick_start(mode_name):
+    if mode_name == "study":
+        st.session_state.user_mode_widget = "Student Mode"
+        st.session_state.source_mode_widget = "Search the web"
+        st.session_state.output_style_widget = "Study Guide"
+        st.session_state.question_box = "Explain this topic like I am a beginner: "
+    elif mode_name == "files":
+        st.session_state.user_mode_widget = "Student Mode"
+        st.session_state.source_mode_widget = "Use my sources"
+        st.session_state.output_style_widget = "Simple Summary"
+        st.session_state.question_box = "Summarize the attached files in simple terms."
+    elif mode_name == "web":
+        st.session_state.user_mode_widget = "General Mode"
+        st.session_state.source_mode_widget = "Search the web"
+        st.session_state.output_style_widget = "Detailed Research"
+        st.session_state.question_box = "Research this topic using reliable sources: "
+
+    st.rerun()
+
+
 def show_start_cards():
     if st.session_state.chat_history:
         return
@@ -422,6 +453,9 @@ def show_start_cards():
             unsafe_allow_html=True,
         )
 
+        if st.button("Start studying", use_container_width=True):
+            apply_quick_start("study")
+
     with col2:
         st.markdown(
             """
@@ -433,16 +467,22 @@ def show_start_cards():
             unsafe_allow_html=True,
         )
 
+        if st.button("Summarize files", use_container_width=True):
+            apply_quick_start("files")
+
     with col3:
         st.markdown(
             """
             <div class="arca-card">
                 <div class="arca-card-title">🔍 Research the web</div>
-                <div class="arca-card-text">Use trusted sources, citations, evidence maps, and exportable outputs.</div>
+                <div class="arca-card-text">Use trusted sources, evidence maps, and exportable outputs.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+        if st.button("Research web", use_container_width=True):
+            apply_quick_start("web")
 
     st.markdown("")
 
@@ -466,7 +506,7 @@ def show_example_prompts():
     for col, example in zip(cols, examples):
         with col:
             if st.button(example, use_container_width=True):
-                st.session_state.pending_prompt = example
+                st.session_state.question_box = example
                 st.rerun()
 
 
@@ -481,6 +521,43 @@ def show_answer_badges(user_mode, analysis_mode, research_depth, source_mode, ou
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_question_bar():
+    st.markdown('<div class="input-wrap">', unsafe_allow_html=True)
+
+    cols = st.columns([0.82, 0.08, 0.10])
+
+    with cols[0]:
+        st.text_input(
+            "Question",
+            key="question_box",
+            label_visibility="collapsed",
+            placeholder="Ask a question, paste a task, or upload files and ask what you need...",
+        )
+
+    voice_text = ""
+
+    with cols[1]:
+        with st.popover("🎤", use_container_width=True):
+            audio_input = st.audio_input("Record")
+            if audio_input:
+                voice_text = transcribe_voice(audio_input)
+                if voice_text:
+                    st.success("Voice captured.")
+
+    with cols[2]:
+        send_clicked = st.button("↑", use_container_width=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if voice_text:
+        return voice_text
+
+    if send_clicked and st.session_state.question_box.strip():
+        return st.session_state.question_box.strip()
+
+    return None
 
 
 def show_dashboard():
@@ -714,7 +791,12 @@ def initialize_session_state():
         "latest_metadata": {},
         "saved_findings": [],
         "show_inline_image": True,
-        "pending_prompt": "",
+        "question_box": "",
+        "output_style_widget": "Simple Summary",
+        "user_mode_widget": "Student Mode",
+        "source_mode_widget": "Use my sources",
+        "analysis_mode_widget": "Standard Research",
+        "research_depth_widget": "Fast Research",
     }
 
     for key, value in defaults.items():
@@ -723,8 +805,6 @@ def initialize_session_state():
 
 
 initialize_session_state()
-
-
 show_hero()
 
 
@@ -740,18 +820,20 @@ with st.sidebar:
             "Presentation Notes",
             "Decision Brief",
         ],
-        index=0,
+        key="output_style_widget",
     )
 
     user_mode = st.radio(
         "Mode",
         ["Student Mode", "General Mode"],
         horizontal=True,
+        key="user_mode_widget",
     )
 
     source_mode = st.radio(
         "Sources",
         ["Use my sources", "Search the web", "Use my sources + web search"],
+        key="source_mode_widget",
     )
 
     urls_input = st.text_area(
@@ -773,11 +855,13 @@ with st.sidebar:
         analysis_mode = st.radio(
             "Analysis",
             ["Standard Research", "Compare & Verify"],
+            key="analysis_mode_widget",
         )
 
         research_depth = st.radio(
             "Speed",
             ["Fast Research", "Deep Research"],
+            key="research_depth_widget",
         )
 
         max_web_results = st.slider(
@@ -807,36 +891,14 @@ with st.sidebar:
         st.session_state.latest_user_mode = ""
         st.session_state.latest_analysis_mode = ""
         st.session_state.latest_metadata = {}
-        st.session_state.pending_prompt = ""
+        st.session_state.question_box = ""
         st.rerun()
-
-
-with st.expander("🎤 Voice input", expanded=False):
-    audio_input = st.audio_input("Record your question")
-
-
-voice_question = ""
-
-if audio_input:
-    voice_question = transcribe_voice(audio_input)
-
-    if voice_question:
-        st.info(f"🗣️ {voice_question}")
 
 
 show_start_cards()
 show_example_prompts()
 
-
-question = st.chat_input("Ask a question, paste a task, or upload files and ask what you need...")
-
-if st.session_state.pending_prompt:
-    question = st.session_state.pending_prompt
-    st.session_state.pending_prompt = ""
-
-if voice_question:
-    question = voice_question
-
+question = render_question_bar()
 
 research_tab, dashboard_tab, workspace_tab, exports_tab = st.tabs(
     ["🔎 Research", "📊 Dashboard", "🗂️ Workspace", "📄 Exports"]
@@ -983,25 +1045,18 @@ Style instruction:
                 st.success("Saved.")
 
         with action_col2:
-            st.link_button(
-                "📊 Dashboard",
-                "#dashboard",
-                use_container_width=True,
-            )
+            if st.button("📊 View metrics", use_container_width=True):
+                st.info("Open the Dashboard tab.")
 
         with action_col3:
-            st.link_button(
-                "📄 Exports",
-                "#exports",
-                use_container_width=True,
-            )
+            if st.button("📄 Export", use_container_width=True):
+                st.info("Open the Exports tab.")
 
         show_audio_section()
         show_quiz_section(user_mode)
 
 
 with dashboard_tab:
-    st.markdown('<span id="dashboard"></span>', unsafe_allow_html=True)
     show_dashboard()
 
 
@@ -1010,5 +1065,4 @@ with workspace_tab:
 
 
 with exports_tab:
-    st.markdown('<span id="exports"></span>', unsafe_allow_html=True)
     show_exports()
