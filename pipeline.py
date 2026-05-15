@@ -56,6 +56,25 @@ MEDIUM_TRUST_DOMAINS = [
 ]
 
 
+def get_limits(research_depth: str) -> Dict[str, int]:
+    if research_depth == "Deep Research":
+        return {
+            "web_chars": 10000,
+            "url_chars": 10000,
+            "video_chars": 12000,
+            "file_chars": 12000,
+            "image_chars": 10000,
+        }
+
+    return {
+        "web_chars": 5000,
+        "url_chars": 5000,
+        "video_chars": 8000,
+        "file_chars": 9000,
+        "image_chars": 7000,
+    }
+
+
 def get_gemini_model():
     api_key = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -63,6 +82,7 @@ def get_gemini_model():
         raise ValueError("Missing GEMINI_API_KEY in Streamlit secrets.")
 
     genai.configure(api_key=api_key)
+
     return genai.GenerativeModel("gemini-3-flash-preview")
 
 
@@ -70,6 +90,7 @@ def safe_generate_content(prompt: str) -> str:
     try:
         model = get_gemini_model()
         response = model.generate_content(prompt)
+
         text = getattr(response, "text", "").strip()
 
         if not text:
@@ -103,6 +124,7 @@ def safe_generate_multimodal_content(parts: list) -> str:
     try:
         model = get_gemini_model()
         response = model.generate_content(parts)
+
         text = getattr(response, "text", "").strip()
 
         if not text:
@@ -141,6 +163,7 @@ def get_domain(url: str) -> str:
             return "uploaded-file"
 
         parsed = urlparse(url)
+
         return parsed.netloc.lower().replace("www.", "")
 
     except Exception:
@@ -182,6 +205,7 @@ def is_trusted_url(url: str) -> bool:
         return True
 
     lowered_url = url.lower()
+
     return any(domain in lowered_url for domain in TRUSTED_DOMAINS)
 
 
@@ -190,7 +214,7 @@ def rate_source_reliability(source: Dict[str, Any]) -> Dict[str, Any]:
     url = source.get("url", "")
     domain = get_domain(url)
 
-    if source_type in ["pdf", "docx", "image"]:
+    if source_type in ["pdf", "docx", "pptx", "image"]:
         return {
             "label": "User-provided source",
             "score": 80,
@@ -211,7 +235,7 @@ def rate_source_reliability(source: Dict[str, Any]) -> Dict[str, Any]:
             "reason": "Recognized organization or platform, but claims should still be verified.",
         }
 
-    if source_type in ["web_search", "url"]:
+    if source_type in ["web_search", "url", "video"]:
         return {
             "label": "Needs review",
             "score": 60,
@@ -317,13 +341,15 @@ def get_youtube_video_id(url: str) -> str:
         return url.split("v=")[-1].split("&")[0]
 
     match = re.search(r"embed/([^?&/]+)", url)
+
     if match:
         return match.group(1)
 
     return ""
 
 
-def extract_youtube_transcript(url: str) -> Dict[str, Any]:
+@st.cache_data(ttl=3600, show_spinner=False)
+def extract_youtube_transcript_cached(url: str, max_chars: int) -> Dict[str, Any]:
     video_id = get_youtube_video_id(url)
 
     if not video_id:
@@ -348,7 +374,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
                 "title": f"YouTube Video Transcript ({video_id})",
                 "source_name": "YouTube",
                 "url": url,
-                "text": text[:15000],
+                "text": text[:max_chars],
                 "type": "video",
             }
 
@@ -382,6 +408,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
 
                     for caption in webvtt.read(vtt_path):
                         caption_text = caption.text.replace("\n", " ").strip()
+
                         if caption_text:
                             transcript_parts.append(caption_text)
 
@@ -392,7 +419,7 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
                     "title": title,
                     "source_name": "YouTube",
                     "url": url,
-                    "text": text[:15000],
+                    "text": text[:max_chars],
                     "type": "video",
                 }
 
@@ -414,15 +441,15 @@ def extract_youtube_transcript(url: str) -> Dict[str, Any]:
     }
 
 
-def fetch_url_text(url: str) -> Dict[str, Any]:
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_url_text_cached(url: str, max_chars: int) -> Dict[str, Any]:
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-
         response = requests.get(
             url,
-            headers=headers,
-            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
         )
+
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -450,7 +477,7 @@ def fetch_url_text(url: str) -> Dict[str, Any]:
             "title": title,
             "source_name": get_source_name(url, title),
             "url": url,
-            "text": text[:12000],
+            "text": text[:max_chars],
             "type": "url",
         }
 
@@ -464,7 +491,7 @@ def fetch_url_text(url: str) -> Dict[str, Any]:
         }
 
 
-def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
+def extract_pdf_text(uploaded_pdf, max_chars: int) -> Dict[str, Any]:
     try:
         pdf_bytes = uploaded_pdf.read()
 
@@ -474,7 +501,6 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
         )
 
         text = "\n".join([page.get_text() for page in doc])
-
         title = uploaded_pdf.name
 
         source_name = (
@@ -488,7 +514,7 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
             "title": title,
             "source_name": source_name,
             "url": title,
-            "text": text[:15000],
+            "text": text[:max_chars],
             "type": "pdf",
         }
 
@@ -502,7 +528,7 @@ def extract_pdf_text(uploaded_pdf) -> Dict[str, Any]:
         }
 
 
-def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
+def extract_docx_text(uploaded_docx, max_chars: int) -> Dict[str, Any]:
     try:
         doc = Document(uploaded_docx)
 
@@ -513,7 +539,6 @@ def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
         ]
 
         text = "\n".join(paragraphs)
-
         title = uploaded_docx.name
 
         source_name = (
@@ -527,7 +552,7 @@ def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
             "title": title,
             "source_name": source_name,
             "url": title,
-            "text": text[:15000],
+            "text": text[:max_chars],
             "type": "docx",
         }
 
@@ -541,7 +566,52 @@ def extract_docx_text(uploaded_docx) -> Dict[str, Any]:
         }
 
 
-def extract_image_text(uploaded_image) -> Dict[str, Any]:
+def extract_pptx_text(uploaded_pptx, max_chars: int) -> Dict[str, Any]:
+    try:
+        prs = Presentation(uploaded_pptx)
+        slide_texts = []
+
+        for slide_number, slide in enumerate(prs.slides, start=1):
+            current_slide_text = []
+
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    current_slide_text.append(shape.text.strip())
+
+            if current_slide_text:
+                slide_texts.append(
+                    f"Slide {slide_number}:\n" + "\n".join(current_slide_text)
+                )
+
+        text = "\n\n".join(slide_texts)
+        title = uploaded_pptx.name
+
+        source_name = (
+            title.replace(".pptx", "")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()[:25]
+        ) or "PPTX"
+
+        return {
+            "title": title,
+            "source_name": source_name,
+            "url": title,
+            "text": text[:max_chars] if text else "No readable text found in this PowerPoint file.",
+            "type": "pptx",
+        }
+
+    except Exception as e:
+        return {
+            "title": uploaded_pptx.name,
+            "source_name": "PPTX",
+            "url": uploaded_pptx.name,
+            "text": f"Error reading PPTX: {str(e)}",
+            "type": "pptx_error",
+        }
+
+
+def extract_image_text(uploaded_image, max_chars: int) -> Dict[str, Any]:
     try:
         image_bytes = uploaded_image.read()
         mime_type = uploaded_image.type or "image/png"
@@ -584,7 +654,7 @@ Return concise but complete extracted content.
             "title": title,
             "source_name": source_name,
             "url": title,
-            "text": extracted_text[:15000],
+            "text": extracted_text[:max_chars],
             "type": "image",
         }
 
@@ -598,19 +668,30 @@ Return concise but complete extracted content.
         }
 
 
-def search_web(
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_web_cached(
     query: str,
-    max_results: int = 5,
+    max_results: int = 3,
     prefer_trusted_sources: bool = False,
+    research_depth: str = "Fast Research",
 ) -> List[Dict[str, Any]]:
     client = get_tavily_client()
 
+    if research_depth == "Deep Research":
+        search_depth = "advanced"
+        include_raw_content = True
+        max_chars = 10000
+    else:
+        search_depth = "basic"
+        include_raw_content = False
+        max_chars = 5000
+
     search_result = client.search(
         query=query,
-        search_depth="advanced",
+        search_depth=search_depth,
         max_results=max_results,
         include_answer=False,
-        include_raw_content=True,
+        include_raw_content=include_raw_content,
     )
 
     all_sources = []
@@ -625,7 +706,7 @@ def search_web(
                 "title": title,
                 "source_name": get_source_name(url, title),
                 "url": url,
-                "text": content[:12000],
+                "text": content[:max_chars],
                 "type": "web_search",
             }
         )
@@ -644,9 +725,10 @@ def search_web(
     return all_sources
 
 
-def find_reference_images(
+@st.cache_data(ttl=3600, show_spinner=False)
+def find_reference_images_cached(
     query: str,
-    max_images: int = 6,
+    max_images: int = 1,
     prefer_trusted_sources: bool = True,
 ) -> List[Dict[str, str]]:
     try:
@@ -654,8 +736,8 @@ def find_reference_images(
 
         search_result = client.search(
             query=query,
-            search_depth="advanced",
-            max_results=5,
+            search_depth="basic",
+            max_results=3,
             include_answer=False,
             include_images=True,
             include_image_descriptions=True,
@@ -726,7 +808,7 @@ def find_reference_images(
                 break
 
         if not unique_images and prefer_trusted_sources:
-            return find_reference_images(
+            return find_reference_images_cached(
                 query=query,
                 max_images=max_images,
                 prefer_trusted_sources=False,
@@ -760,7 +842,7 @@ def build_prompt(
 [Source {i}]
 Source name: {src["source_name"]}
 Title: {src["title"]}
-URL: {src["url"]}
+URL/File: {src["url"]}
 Type: {src["type"]}
 Reliability: {src.get("reliability_label", "Unknown")} ({src.get("reliability_score", "N/A")}/100)
 Reliability reason: {src.get("reliability_reason", "Not available")}
@@ -770,18 +852,21 @@ Content:
         )
 
     sources_text = "\n\n".join(source_blocks)
+
     recent_chat = chat_history[-6:] if chat_history else []
-    chat_text = "\n".join([f"{role}: {msg}" for role, msg in recent_chat])
+
+    chat_text = "\n".join(
+        [
+            f"{role}: {msg}"
+            for role, msg in recent_chat
+        ]
+    )
 
     if user_mode == "Student Mode":
         mode_instruction = """
 You are operating in Student Mode.
 
-Your goals:
-- explain clearly and simply
-- help the user learn and retain information
-- identify important concepts
-- provide beginner-friendly explanations
+Explain clearly, simply, and help the user learn.
 
 At the end include:
 ## Quiz
@@ -794,72 +879,61 @@ Mention concepts the student should revise further.
         mode_instruction = """
 You are operating in General Mode.
 
-Your goals:
-- provide professional research synthesis
-- focus on insights and decision-making
-- highlight actionable findings
-- provide executive-style summaries
+Provide a professional research synthesis focused on insights, decision-making, and actionable findings.
 """
 
     citation_rules = """
-Citation and evidence rules:
-- Use inline evidence markers for important factual claims.
-- Use the exact format [Source 1], [Source 2], etc.
-- Only cite a source if that source actually supports the claim.
-- Do not cite every sentence; cite important claims, comparisons, risks, numbers, and conclusions.
-- Prefer higher reliability sources when sources disagree.
-- If evidence is weak or missing, say that clearly.
+Citation rules:
+- Use inline markers like [Source 1], [Source 2] for important factual claims.
+- Only cite sources that support the claim.
+- Do not cite every sentence.
+- Prefer higher reliability sources.
+- If evidence is weak or missing, say so.
 - Do not invent source numbers.
 """
 
     if analysis_mode == "Compare & Verify":
         output_format = """
-Return this exact format:
+Return this format:
 
 ## Key Takeaway
-Give one clear sentence that captures the final conclusion with source markers if supported.
+One clear sentence with source markers if supported.
 
 ## Executive Answer
-Give the clearest answer to the user's question with source markers for important claims.
+Clear answer with source markers for important claims.
 
 ## Evidence Map
 - Claim: ...
-  Evidence: [Source X], [Source Y]
+  Evidence: [Source X]
   Strength: Strong / Moderate / Weak
 
 ## Agreements Across Sources
-List points that multiple sources agree on and include source markers.
+List agreements with source markers.
 
 ## Conflicting Information
-List contradictions or differences between sources and include source markers. If none are found, say so.
-
-## Strongest Evidence
-Explain which sources appear most useful or evidence-backed and why.
-
-## Weak or Missing Evidence
-Mention what is unclear, unsupported, missing, or not verified.
+List conflicts or say none found.
 
 ## Final Consensus
-Give a balanced conclusion with source markers.
+Balanced conclusion.
 
 ## Confidence Assessment
-Rate confidence as Low, Medium, or High and explain why.
+Low / Medium / High with a short reason.
 
 ## Simple Summary
-Explain the conclusion in very simple words.
+Very simple explanation.
 
 ## Suggested Follow-Up Questions
-Give 3 useful follow-up questions the user can ask next.
+3 useful questions.
 
 ## Recommended Next Steps
-Give 3 practical next steps based on the findings.
+3 practical next steps.
 """
     else:
         output_format = """
 Return this format:
 
 ## Key Takeaway
-Give one clear sentence that captures the most important finding with source markers if supported.
+One clear sentence with source markers if supported.
 
 ## Answer
 Clear answer with source markers for important factual claims.
@@ -870,24 +944,24 @@ Clear answer with source markers for important factual claims.
   Strength: Strong / Moderate / Weak
 
 ## Key Points
-- Point 1 with source marker if supported
-- Point 2 with source marker if supported
-- Point 3 with source marker if supported
+- Point 1
+- Point 2
+- Point 3
 
 ## Simple Summary
-Explain in very simple words.
+Very simple explanation.
 
 ## What I verified from sources
-Briefly say what was supported by the sources.
+Briefly say what was supported.
 
 ## Limits
-Mention anything that was unclear or not available from the sources.
+Mention anything unclear or unavailable.
 
 ## Suggested Follow-Up Questions
-Give 3 useful follow-up questions the user can ask next.
+3 useful questions.
 
 ## Recommended Next Steps
-Give 3 practical next steps based on the answer.
+3 practical next steps.
 """
 
     return f"""
@@ -899,14 +973,6 @@ Analysis mode:
 {analysis_mode}
 
 {citation_rules}
-
-Your job:
-- Answer the user's question using the provided sources.
-- If evidence is insufficient, say so clearly.
-- Do not invent facts.
-- Keep the answer structured and easy to read.
-- If Compare & Verify mode is active, compare sources against each other.
-- Prefer stronger sources over weaker sources when forming conclusions.
 
 User question:
 {question}
@@ -975,6 +1041,7 @@ def clean_export_text(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("##", "")
     text = text.replace("*", "")
+
     return text.strip()
 
 
@@ -983,6 +1050,7 @@ def make_paragraph_safe(text: str) -> str:
     text = text.replace("&", "&amp;")
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
+
     return text
 
 
@@ -991,6 +1059,7 @@ def extract_bullet_points(answer: str, max_points: int = 8) -> List[str]:
     lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
 
     bullets = []
+
     skip_starts = [
         "key takeaway",
         "answer",
@@ -1058,6 +1127,7 @@ def generate_word_report(
     doc.add_paragraph(clean_answer)
 
     doc.add_heading("Key Highlights", level=1)
+
     for point in extract_bullet_points(answer, max_points=6):
         doc.add_paragraph(point, style="List Bullet")
 
@@ -1066,6 +1136,7 @@ def generate_word_report(
         doc.add_paragraph(clean_feedback)
 
     doc.add_heading("Sources Used", level=1)
+
     for i, src in enumerate(sources, start=1):
         p = doc.add_paragraph(style="List Bullet")
         p.add_run(f"Source {i}: {src['source_name']} — ").bold = True
@@ -1077,6 +1148,7 @@ def generate_word_report(
         )
 
     doc.add_heading("Recommended Next Steps", level=1)
+
     for step in [
         "Review the generated findings and summary.",
         "Verify important claims using the listed sources.",
@@ -1088,6 +1160,7 @@ def generate_word_report(
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
+
     return buffer
 
 
@@ -1111,12 +1184,14 @@ def generate_pdf_report(
 
     story.append(Paragraph("Agent ARCA Research Report", styles["Title"]))
     story.append(Spacer(1, 8))
+
     story.append(
         Paragraph(
             "AI-powered multimodal research, learning, and decision-intelligence assistant",
             styles["BodyText"],
         )
     )
+
     story.append(Spacer(1, 16))
 
     story.append(Paragraph("Executive Overview", styles["Heading1"]))
@@ -1128,6 +1203,7 @@ def generate_pdf_report(
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Research Findings", styles["Heading1"]))
+
     for paragraph in clean_answer.split("\n"):
         if paragraph.strip():
             story.append(Paragraph(paragraph.strip(), styles["BodyText"]))
@@ -1135,6 +1211,7 @@ def generate_pdf_report(
 
     story.append(Spacer(1, 10))
     story.append(Paragraph("Key Highlights", styles["Heading1"]))
+
     for point in extract_bullet_points(answer, max_points=6):
         story.append(Paragraph(f"• {make_paragraph_safe(point)}", styles["BodyText"]))
         story.append(Spacer(1, 4))
@@ -1142,6 +1219,7 @@ def generate_pdf_report(
     if clean_feedback:
         story.append(PageBreak())
         story.append(Paragraph("Student Quiz Feedback", styles["Heading1"]))
+
         for paragraph in clean_feedback.split("\n"):
             if paragraph.strip():
                 story.append(Paragraph(paragraph.strip(), styles["BodyText"]))
@@ -1149,6 +1227,7 @@ def generate_pdf_report(
 
     story.append(PageBreak())
     story.append(Paragraph("Sources Used", styles["Heading1"]))
+
     for i, src in enumerate(sources, start=1):
         source_text = (
             f"Source {i}: {src['source_name']} — {src['title']}<br/>"
@@ -1156,11 +1235,13 @@ def generate_pdf_report(
             f"Reliability: {src.get('reliability_label', 'Unknown')} "
             f"({src.get('reliability_score', 'N/A')}/100)"
         )
+
         story.append(Paragraph(make_paragraph_safe(source_text), styles["BodyText"]))
         story.append(Spacer(1, 8))
 
     story.append(Spacer(1, 8))
     story.append(Paragraph("Recommended Next Steps", styles["Heading1"]))
+
     for step in [
         "Review the generated findings and summary.",
         "Verify important claims using the listed sources.",
@@ -1172,6 +1253,7 @@ def generate_pdf_report(
 
     doc.build(story)
     buffer.seek(0)
+
     return buffer
 
 
@@ -1201,14 +1283,15 @@ def generate_powerpoint_deck(
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Executive Summary"
-    tf = slide.placeholders[1].text_frame
-    tf.clear()
+
+    text_frame = slide.placeholders[1].text_frame
+    text_frame.clear()
 
     for i, point in enumerate(summary_points[:5]):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.text = point
-        p.level = 0
-        p.font.size = PPTPt(18)
+        paragraph = text_frame.paragraphs[0] if i == 0 else text_frame.add_paragraph()
+        paragraph.text = point
+        paragraph.level = 0
+        paragraph.font.size = PPTPt(18)
 
     slide = prs.slides.add_slide(content_slide_layout)
     slide.shapes.title.text = "Research Quality Snapshot"
@@ -1220,6 +1303,7 @@ def generate_powerpoint_deck(
     )
 
     source_lines = []
+
     for i, src in enumerate(sources, start=1):
         source_lines.append(
             f"Source {i}: {src['source_name']} — "
@@ -1248,179 +1332,8 @@ def generate_powerpoint_deck(
     buffer = BytesIO()
     prs.save(buffer)
     buffer.seek(0)
+
     return buffer
-
-
-def clean_graphviz_output(text: str) -> str:
-    text = text.strip()
-
-    fenced = re.search(r"```(?:dot)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if fenced:
-        text = fenced.group(1).strip()
-
-    return text
-
-
-def default_flowchart_dot() -> str:
-    return """
-digraph G {
-    rankdir=LR;
-    node [shape=box, style=rounded];
-    n1 [label="Research Question"];
-    n2 [label="Gather Sources"];
-    n3 [label="Analyze Evidence"];
-    n4 [label="Summarize Findings"];
-    n5 [label="Provide Answer"];
-    n1 -> n2 -> n3 -> n4 -> n5;
-}
-""".strip()
-
-
-def default_tree_dot() -> str:
-    return """
-digraph G {
-    rankdir=TB;
-    node [shape=box, style=rounded];
-    root [label="Main Topic"];
-    a [label="Subtopic 1"];
-    b [label="Subtopic 2"];
-    c [label="Subtopic 3"];
-    a1 [label="Detail A"];
-    b1 [label="Detail B"];
-    c1 [label="Detail C"];
-    root -> a;
-    root -> b;
-    root -> c;
-    a -> a1;
-    b -> b1;
-    c -> c1;
-}
-""".strip()
-
-
-def generate_visual_assets(
-    question: str,
-    answer: str,
-    user_mode: str,
-    analysis_mode: str,
-    max_reference_images: int = 6,
-    prefer_trusted_sources: bool = True,
-) -> Dict[str, Any]:
-    flowchart_prompt = f"""
-You are generating a Graphviz DOT flowchart for a research assistant app.
-
-Based on this question and answer, create a simple professional flowchart showing the logic or process.
-
-Rules:
-- Return ONLY valid Graphviz DOT code.
-- Use digraph G.
-- Use max 8 nodes.
-- Use short labels.
-- Use rankdir=LR.
-- Use node [shape=box, style=rounded].
-- Do not return markdown fences.
-- Do not explain anything.
-
-Question:
-{question}
-
-Answer:
-{answer}
-""".strip()
-
-    tree_prompt = f"""
-You are generating a Graphviz DOT tree diagram.
-
-Based on this question and answer, create a simple professional tree diagram that organizes the topic into main branches and sub-branches.
-
-Rules:
-- Return ONLY valid Graphviz DOT code.
-- Use digraph G.
-- Use max 10 nodes.
-- Use short labels.
-- Use rankdir=TB.
-- Use node [shape=box, style=rounded].
-- Do not return markdown fences.
-- Do not explain anything.
-
-Question:
-{question}
-
-Answer:
-{answer}
-""".strip()
-
-    image_prompt_request = f"""
-Create one strong professional descriptive image prompt based on this research answer.
-
-The prompt should be suitable for generating:
-- an infographic
-- conceptual illustration
-- presentation visual
-- educational or professional summary image
-
-Include:
-- subject
-- layout
-- main visual elements
-- tone/style
-- color mood
-- what text/captions should appear if needed
-
-Return only the final image prompt text.
-
-Question:
-{question}
-
-Mode:
-{user_mode}
-
-Analysis Mode:
-{analysis_mode}
-
-Answer:
-{answer}
-""".strip()
-
-    visual_search_query_prompt = f"""
-Create a short web image search query for finding helpful reference images, diagrams, charts, or educational visuals for this research topic.
-
-Return only the search query.
-
-Question:
-{question}
-
-Answer:
-{answer}
-""".strip()
-
-    flowchart_response = clean_graphviz_output(safe_generate_content(flowchart_prompt))
-    tree_response = clean_graphviz_output(safe_generate_content(tree_prompt))
-    image_prompt_response = safe_generate_content(image_prompt_request).strip()
-    visual_search_query = safe_generate_content(visual_search_query_prompt).strip()
-
-    if not visual_search_query or visual_search_query.startswith("⚠️"):
-        visual_search_query = question
-
-    if not flowchart_response.lower().startswith("digraph"):
-        flowchart_response = default_flowchart_dot()
-
-    if not tree_response.lower().startswith("digraph"):
-        tree_response = default_tree_dot()
-
-    reference_images = find_reference_images(
-        query=visual_search_query,
-        max_images=max_reference_images,
-        prefer_trusted_sources=prefer_trusted_sources,
-    )
-
-    return {
-        "flowchart_dot": flowchart_response,
-        "tree_dot": tree_response,
-        "image_prompt": image_prompt_response,
-        "visual_search_query": visual_search_query,
-        "reference_images": reference_images,
-    }
 
 
 def run_pipeline(
@@ -1428,36 +1341,73 @@ def run_pipeline(
     urls: List[str],
     uploaded_pdfs,
     uploaded_docs,
+    uploaded_ppts,
     uploaded_images,
     mode: str,
     user_mode: str,
     analysis_mode: str,
     previous_context: str = None,
     chat_history: List[Any] = None,
-    max_web_results: int = 5,
+    max_web_results: int = 3,
     prefer_trusted_sources: bool = False,
+    research_depth: str = "Fast Research",
 ) -> Dict[str, Any]:
     start_time = time.time()
     all_sources = []
+    limits = get_limits(research_depth)
 
     if mode in ["Use my sources", "Use my sources + web search"]:
         for url in urls:
             if "youtube.com" in url or "youtu.be" in url:
-                all_sources.append(extract_youtube_transcript(url))
+                all_sources.append(
+                    extract_youtube_transcript_cached(
+                        url=url,
+                        max_chars=limits["video_chars"],
+                    )
+                )
             else:
-                all_sources.append(fetch_url_text(url))
+                all_sources.append(
+                    fetch_url_text_cached(
+                        url=url,
+                        max_chars=limits["url_chars"],
+                    )
+                )
 
         if uploaded_pdfs:
             for pdf in uploaded_pdfs:
-                all_sources.append(extract_pdf_text(pdf))
+                all_sources.append(
+                    extract_pdf_text(
+                        uploaded_pdf=pdf,
+                        max_chars=limits["file_chars"],
+                    )
+                )
 
         if uploaded_docs:
             for docx in uploaded_docs:
-                all_sources.append(extract_docx_text(docx))
+                all_sources.append(
+                    extract_docx_text(
+                        uploaded_docx=docx,
+                        max_chars=limits["file_chars"],
+                    )
+                )
+
+        if uploaded_ppts:
+            for pptx in uploaded_ppts:
+                all_sources.append(
+                    extract_pptx_text(
+                        uploaded_pptx=pptx,
+                        max_chars=limits["file_chars"],
+                    )
+                )
 
         if uploaded_images:
             for image in uploaded_images:
-                all_sources.append(extract_image_text(image))
+                all_sources.append(
+                    extract_image_text(
+                        uploaded_image=image,
+                        max_chars=limits["image_chars"],
+                    )
+                )
 
     should_search_web = (
         mode in ["Search the web", "Use my sources + web search"]
@@ -1466,10 +1416,11 @@ def run_pipeline(
 
     if should_search_web:
         all_sources.extend(
-            search_web(
+            search_web_cached(
                 query=question,
                 max_results=max_web_results,
                 prefer_trusted_sources=prefer_trusted_sources,
+                research_depth=research_depth,
             )
         )
 
@@ -1490,7 +1441,7 @@ def run_pipeline(
 
     response_time_seconds = round(time.time() - start_time, 2)
     trust = compute_overall_trust_score(ranked_sources)
-    workflow_type = f"{user_mode} | {analysis_mode} | {mode}"
+    workflow_type = f"{user_mode} | {analysis_mode} | {mode} | {research_depth}"
 
     new_context = f"""
 Last question: {question}
@@ -1533,6 +1484,7 @@ Sources used:
                 output_tokens_estimate,
             ),
             "workflow_type": workflow_type,
+            "research_depth": research_depth,
             "trust_score": trust["score"],
             "trust_label": trust["label"],
             "trust_message": trust["message"],
