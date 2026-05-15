@@ -2,6 +2,7 @@ import re
 import tempfile
 from collections import Counter
 from datetime import datetime
+from urllib.parse import urlparse
 
 import streamlit as st
 from gtts import gTTS
@@ -119,6 +120,167 @@ def transcribe_voice(audio_input):
         return ""
 
 
+def get_domain(url):
+    try:
+        if not url.startswith("http"):
+            return "uploaded-file"
+
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower().replace("www.", "")
+
+        return domain
+
+    except Exception:
+        return "unknown"
+
+
+def rate_source_reliability(source):
+    source_type = source.get("type", "unknown")
+    url = source.get("url", "")
+    domain = get_domain(url)
+
+    high_trust_domains = [
+        "nih.gov",
+        "ncbi.nlm.nih.gov",
+        "pmc.ncbi.nlm.nih.gov",
+        "cdc.gov",
+        "who.int",
+        "fda.gov",
+        "nature.com",
+        "sciencedirect.com",
+        "springer.com",
+        "ieee.org",
+        "acm.org",
+        "arxiv.org",
+        "edu",
+        "gov",
+    ]
+
+    medium_trust_domains = [
+        "ibm.com",
+        "microsoft.com",
+        "google.com",
+        "aws.amazon.com",
+        "cloud.google.com",
+        "openai.com",
+        "wikipedia.org",
+        "youtube.com",
+        "youtu.be",
+    ]
+
+    if source_type in ["pdf", "docx", "image"]:
+        return {
+            "label": "User-provided source",
+            "score": 80,
+            "reason": "Uploaded directly by the user; useful but should be checked for origin and accuracy.",
+        }
+
+    if any(domain.endswith(d) or d in domain for d in high_trust_domains):
+        return {
+            "label": "High trust",
+            "score": 95,
+            "reason": "Academic, government, medical, or research-oriented source.",
+        }
+
+    if any(d in domain for d in medium_trust_domains):
+        return {
+            "label": "Moderate trust",
+            "score": 75,
+            "reason": "Recognized organization or platform, but claims should still be verified.",
+        }
+
+    if source_type == "web_search":
+        return {
+            "label": "Needs review",
+            "score": 60,
+            "reason": "Web result source; reliability depends on publisher and evidence quality.",
+        }
+
+    if source_type == "url":
+        return {
+            "label": "Needs review",
+            "score": 60,
+            "reason": "URL source; reliability depends on domain, author, and citations.",
+        }
+
+    return {
+        "label": "Unknown",
+        "score": 50,
+        "reason": "Reliability could not be determined automatically.",
+    }
+
+
+def compute_overall_trust_score(sources):
+    if not sources:
+        return {
+            "score": 0,
+            "label": "No sources",
+            "message": "No sources available for trust scoring.",
+        }
+
+    scores = [
+        rate_source_reliability(src)["score"]
+        for src in sources
+    ]
+
+    avg_score = round(sum(scores) / len(scores))
+
+    if avg_score >= 85:
+        label = "Strong"
+        message = "The response is supported by generally strong sources."
+    elif avg_score >= 70:
+        label = "Moderate"
+        message = "The response has decent support, but some claims should be verified."
+    elif avg_score >= 50:
+        label = "Limited"
+        message = "The response uses sources that need careful review."
+    else:
+        label = "Weak"
+        message = "The response has weak or insufficient source support."
+
+    return {
+        "score": avg_score,
+        "label": label,
+        "message": message,
+    }
+
+
+def show_source_reliability_panel(sources):
+    st.markdown("### 🛡️ Source Reliability Ranking")
+
+    if not sources:
+        st.warning("No sources available for reliability ranking.")
+        return
+
+    trust = compute_overall_trust_score(sources)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Overall Trust Score", f"{trust['score']}/100")
+
+    with col2:
+        st.metric("Trust Level", trust["label"])
+
+    st.caption(trust["message"])
+
+    for i, src in enumerate(sources, start=1):
+        rating = rate_source_reliability(src)
+        domain = get_domain(src.get("url", ""))
+
+        with st.expander(
+            f"Source {i}: {src.get('source_name', 'Source')} — {rating['label']}"
+        ):
+            st.markdown(f"**Title:** {src.get('title', 'Untitled')}")
+            st.markdown(f"**Domain/File:** {domain}")
+            st.markdown(f"**Type:** {src.get('type', 'unknown')}")
+            st.markdown(f"**Reliability Score:** {rating['score']}/100")
+            st.markdown(f"**Reason:** {rating['reason']}")
+
+            if src.get("url", "").startswith("http"):
+                st.markdown(f"[Open source]({src['url']})")
+
+
 def show_research_dashboard(
     answer,
     sources,
@@ -131,17 +293,19 @@ def show_research_dashboard(
 
     source_count = len(sources)
     word_count = len(answer.split()) if answer else 0
+    trust = compute_overall_trust_score(sources)
 
     source_types = Counter(
         [src.get("type", "unknown") for src in sources]
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     col1.metric("Sources Used", source_count)
     col2.metric("Answer Length", f"{word_count} words")
     col3.metric("Mode", user_mode.replace(" Mode", ""))
     col4.metric("Analysis", analysis_mode)
+    col5.metric("Trust", f"{trust['score']}/100")
 
     st.markdown("### Source Breakdown")
 
@@ -153,18 +317,20 @@ def show_research_dashboard(
 
     st.markdown("### Quick Interpretation")
 
-    if source_count >= 4:
+    if source_count >= 4 and trust["score"] >= 75:
         st.success(
-            "Strong source coverage for this response."
+            "Strong research coverage with decent source trust."
         )
     elif source_count >= 2:
         st.info(
-            "Moderate source coverage. Add more sources for stronger comparison."
+            "Moderate coverage. Add more high-quality sources for stronger verification."
         )
     else:
         st.warning(
             "Limited source coverage. Add more PDFs, Word docs, images, URLs, or web search."
         )
+
+    show_source_reliability_panel(sources)
 
 
 def build_saved_research_markdown(saved_findings):
