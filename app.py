@@ -1,6 +1,5 @@
 import re
 import json
-import tempfile
 from io import BytesIO
 import requests
 from collections import Counter
@@ -165,6 +164,7 @@ def clean_text_for_audio(text):
 
     return text[:1200]
 
+
 def create_audio_bytes(text):
     try:
         clean_text = clean_text_for_audio(text)
@@ -221,6 +221,7 @@ def render_answer_audio_button(answer, key_prefix):
 
     if st.session_state.get(error_key):
         st.warning(f"Audio could not be generated: {st.session_state[error_key]}")
+
 
 def extract_json_from_text(text):
     try:
@@ -613,23 +614,35 @@ def show_hero():
 
 
 def apply_quick_start(mode_name):
-    if mode_name == "study":
+    st.session_state.pending_quick_start = mode_name
+    st.rerun()
+
+
+def apply_pending_quick_start():
+    preset = st.session_state.get("pending_quick_start")
+
+    if not preset:
+        return
+
+    if preset == "study":
         st.session_state.user_mode_widget = "Student Mode"
         st.session_state.source_mode_widget = "Search the web"
         st.session_state.output_style_widget = "Study Guide"
         st.session_state.question_box = "Explain this topic like I am a beginner: "
-    elif mode_name == "files":
+
+    elif preset == "files":
         st.session_state.user_mode_widget = "Student Mode"
         st.session_state.source_mode_widget = "Use my sources"
         st.session_state.output_style_widget = "Simple Summary"
         st.session_state.question_box = "Summarize the attached files in simple terms."
-    elif mode_name == "web":
+
+    elif preset == "web":
         st.session_state.user_mode_widget = "General Mode"
         st.session_state.source_mode_widget = "Search the web"
         st.session_state.output_style_widget = "Detailed Research"
         st.session_state.question_box = "Research this topic using reliable sources: "
 
-    st.rerun()
+    st.session_state.pending_quick_start = None
 
 
 def show_start_cards():
@@ -1186,6 +1199,7 @@ def initialize_session_state():
         "research_depth_widget": "Fast Research",
         "learning_activity": None,
         "quiz_score": None,
+        "pending_quick_start": None,
     }
 
     for key, value in defaults.items():
@@ -1194,6 +1208,7 @@ def initialize_session_state():
 
 
 initialize_session_state()
+apply_pending_quick_start()
 show_hero()
 
 
@@ -1283,6 +1298,7 @@ with st.sidebar:
         st.session_state.question_box = ""
         st.session_state.learning_activity = None
         st.session_state.quiz_score = None
+        st.session_state.pending_quick_start = None
         st.rerun()
 
 
