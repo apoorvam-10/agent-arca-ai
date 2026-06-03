@@ -1,5 +1,7 @@
 import re
+import json
 import tempfile
+from io import BytesIO
 import requests
 from collections import Counter
 from datetime import datetime
@@ -17,11 +19,13 @@ from pipeline import (
     find_reference_images_cached,
 )
 
+
 st.set_page_config(
     page_title="Agent ARCA",
     page_icon="🤖",
     layout="wide",
 )
+
 
 st.markdown(
     """
@@ -159,26 +163,140 @@ def clean_text_for_audio(text):
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text).strip()
 
-    return text[:2500]
+    return text[:1200]
 
-
-def create_audio_file(text):
+def create_audio_bytes(text):
     try:
         clean_text = clean_text_for_audio(text)
 
         if not clean_text:
-            return None
+            return None, "No readable text found for audio."
 
-        tts = gTTS(clean_text)
+        audio_buffer = BytesIO()
 
-        temp_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".mp3",
+        tts = gTTS(
+            text=clean_text,
+            lang="en",
+            slow=False,
         )
 
-        tts.save(temp_file.name)
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
 
-        return temp_file.name
+        audio_bytes = audio_buffer.getvalue()
+
+        if not audio_bytes:
+            return None, "Generated audio was empty."
+
+        return audio_bytes, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+def render_answer_audio_button(answer, key_prefix):
+    if not answer:
+        return
+
+    safe_key_prefix = re.sub(r"[^a-zA-Z0-9_]", "_", str(key_prefix))
+    audio_key = f"audio_bytes_{safe_key_prefix}"
+    error_key = f"audio_error_{safe_key_prefix}"
+
+    if st.button("🔊 Listen", key=f"listen_{safe_key_prefix}", use_container_width=False):
+        with st.spinner("Creating audio..."):
+            audio_bytes, error = create_audio_bytes(answer)
+
+        if audio_bytes:
+            st.session_state[audio_key] = audio_bytes
+            st.session_state[error_key] = ""
+        else:
+            st.session_state[audio_key] = None
+            st.session_state[error_key] = error or "Audio could not be generated."
+
+    if st.session_state.get(audio_key):
+        st.audio(
+            st.session_state[audio_key],
+            format="audio/mpeg",
+        )
+
+    if st.session_state.get(error_key):
+        st.warning(f"Audio could not be generated: {st.session_state[error_key]}")
+
+def extract_json_from_text(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    try:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+
+        if match:
+            return json.loads(match.group(0))
+
+    except Exception:
+        pass
+
+    return None
+
+
+def generate_learning_activity(answer):
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
+
+        if not api_key:
+            return None
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-3-flash-preview")
+
+        prompt = f"""
+Create an interactive learning activity from this answer.
+
+Return ONLY valid JSON. No markdown. No explanation.
+
+JSON format:
+{{
+  "multiple_choice": [
+    {{
+      "question": "Question text",
+      "options": ["A", "B", "C", "D"],
+      "correct_index": 0,
+      "explanation": "Why the correct answer is right"
+    }}
+  ],
+  "flashcards": [
+    {{
+      "front": "Question or concept",
+      "back": "Short answer"
+    }}
+  ],
+  "revision_tips": [
+    "Tip 1",
+    "Tip 2",
+    "Tip 3"
+  ]
+}}
+
+Rules:
+- Create 5 multiple-choice questions.
+- Create 5 flashcards.
+- Keep questions clear and beginner-friendly.
+- Base everything only on the answer below.
+
+Answer:
+{answer}
+""".strip()
+
+        response = model.generate_content(prompt)
+        text = getattr(response, "text", "").strip()
+
+        data = extract_json_from_text(text)
+
+        if not data:
+            return None
+
+        return data
 
     except Exception:
         return None
@@ -308,6 +426,84 @@ def build_style_instruction(output_style):
         return "Answer as a professional decision brief with recommendation, evidence, risks, and next actions."
 
     return "Answer clearly and use evidence from sources."
+
+
+def is_vague_question(question):
+    vague_phrases = {
+        "what is this",
+        "what's this",
+        "what is it",
+        "explain this",
+        "explain it",
+        "summarize this",
+        "summarize it",
+        "tell me about this",
+        "what does this mean",
+        "what are you",
+        "what is arca",
+        "what is agent arca",
+    }
+
+    cleaned = question.strip().lower().replace("?", "")
+
+    return cleaned in vague_phrases
+
+
+def build_about_arca_answer():
+    return """
+## Key Takeaway
+Agent ARCA is an AI-powered research, learning, and decision-intelligence assistant.
+
+## What Agent ARCA Does
+Agent ARCA helps students and professionals turn scattered information into clear, useful outputs. You can upload files, paste links, use web research, ask questions, and generate summaries, study guides, reports, PowerPoint decks, and source-backed answers.
+
+## What You Can Use It For
+- Summarizing PDFs, Word documents, PowerPoint decks, screenshots, and images
+- Understanding class notes, lecture material, or research topics
+- Creating study guides and quiz questions
+- Comparing sources and finding conflicts
+- Generating presentation notes
+- Creating professional research reports
+- Reviewing source credibility and trust scores
+- Exporting findings as Word, PDF, or PowerPoint files
+
+## Modes
+- Student Mode: explains concepts simply, creates quizzes, and helps with learning.
+- General Mode: creates professional summaries, decision briefs, and research insights.
+
+## Simple Summary
+Agent ARCA is like a research assistant that reads your sources, explains them clearly, checks source quality, and helps you turn the result into study or work-ready outputs.
+
+## Try Asking
+- Summarize this file.
+- Explain this topic like I am a beginner.
+- Compare these sources.
+- Make presentation notes.
+- Create a study guide with quiz questions.
+""".strip()
+
+
+def prepare_effective_question(question, uploaded_files, urls):
+    has_context = bool(uploaded_files) or bool(urls)
+
+    if is_vague_question(question) and has_context:
+        return f"""
+The user asked: "{question}"
+
+They are referring to the uploaded file(s), image(s), document(s), slide deck(s), or pasted URL(s).
+
+Analyze the provided source content and explain:
+1. What this content is about
+2. The key points
+3. Why it matters
+4. A simple summary
+5. Any important details the user should notice
+""".strip()
+
+    if is_vague_question(question) and not has_context:
+        return "__ABOUT_ARCA__"
+
+    return question
 
 
 def show_inline_visual_reference(question):
@@ -733,21 +929,6 @@ def show_exports():
         )
 
 
-def show_audio_section():
-    if not st.session_state.latest_student_answer:
-        return
-
-    with st.expander("🔊 Audio", expanded=False):
-        if st.button("Generate Audio", use_container_width=True):
-            with st.spinner("Generating audio..."):
-                audio_file = create_audio_file(st.session_state.latest_student_answer)
-
-            if audio_file:
-                st.audio(audio_file, format="audio/mp3")
-            else:
-                st.warning("Audio could not be generated.")
-
-
 def show_quiz_section(user_mode):
     if user_mode != "Student Mode":
         return
@@ -755,27 +936,233 @@ def show_quiz_section(user_mode):
     if not st.session_state.latest_student_answer:
         return
 
-    with st.expander("📝 Test Your Understanding", expanded=False):
-        student_answers = st.text_area(
-            "Your answers",
-            placeholder="1. ...\n2. ...\n3. ...",
-            height=160,
-        )
+    st.markdown("### 🎓 Learning Practice")
 
-        if st.button("Evaluate", use_container_width=True):
-            if not student_answers.strip():
-                st.warning("Please write your answers first.")
-            else:
-                with st.spinner("Evaluating..."):
-                    feedback = evaluate_quiz_answers(
-                        original_answer=st.session_state.latest_student_answer,
-                        student_answers=student_answers,
+    with st.expander("Practice with quiz + flashcards", expanded=False):
+        col1, col2 = st.columns([0.7, 0.3])
+
+        with col1:
+            st.caption("Generate interactive practice from the latest ARCA answer.")
+
+        with col2:
+            if st.button("Generate Practice", use_container_width=True):
+                with st.spinner("Creating quiz and flashcards..."):
+                    activity = generate_learning_activity(
+                        st.session_state.latest_student_answer
                     )
 
-                st.session_state.latest_quiz_feedback = feedback
+                if activity:
+                    st.session_state.learning_activity = activity
+                    st.session_state.quiz_score = None
+                    st.success("Practice created.")
+                else:
+                    st.warning("Could not create practice right now. Try again.")
 
-        if st.session_state.latest_quiz_feedback:
-            st.markdown(st.session_state.latest_quiz_feedback)
+        activity = st.session_state.get("learning_activity")
+
+        if not activity:
+            st.info("Click **Generate Practice** to create multiple-choice questions and flashcards.")
+            return
+
+        mcq_tab, flashcard_tab, tips_tab, free_response_tab = st.tabs(
+            [
+                "✅ Quiz",
+                "🧠 Flashcards",
+                "📌 Revision Tips",
+                "✍️ Written Feedback",
+            ]
+        )
+
+        with mcq_tab:
+            questions = activity.get("multiple_choice", [])
+
+            if not questions:
+                st.info("No quiz questions available.")
+            else:
+                user_answers = []
+
+                for i, item in enumerate(questions, start=1):
+                    st.markdown(f"**{i}. {item.get('question', '')}**")
+
+                    options = item.get("options", [])
+
+                    if options:
+                        selected = st.radio(
+                            "Choose one",
+                            options=list(range(len(options))),
+                            format_func=lambda x, opts=options: opts[x],
+                            key=f"mcq_{i}",
+                            label_visibility="collapsed",
+                        )
+
+                        user_answers.append(selected)
+
+                if st.button("Check My Score", use_container_width=True):
+                    score = 0
+                    feedback_lines = []
+
+                    for i, item in enumerate(questions, start=1):
+                        correct_index = item.get("correct_index", 0)
+                        explanation = item.get("explanation", "")
+                        options = item.get("options", [""])
+
+                        user_choice = user_answers[i - 1]
+
+                        if user_choice == correct_index:
+                            score += 1
+                            feedback_lines.append(
+                                f"✅ **Question {i}: Correct.** {explanation}"
+                            )
+                        else:
+                            correct_option = options[correct_index] if correct_index < len(options) else ""
+                            feedback_lines.append(
+                                f"❌ **Question {i}: Not quite.** Correct answer: **{correct_option}**. {explanation}"
+                            )
+
+                    st.session_state.quiz_score = {
+                        "score": score,
+                        "total": len(questions),
+                        "feedback": feedback_lines,
+                    }
+
+                if st.session_state.get("quiz_score"):
+                    result = st.session_state.quiz_score
+                    score = result["score"]
+                    total = result["total"]
+
+                    st.success(f"Score: {score}/{total}")
+
+                    if score == total:
+                        st.balloons()
+                        st.markdown("Excellent — you understood this very well.")
+                    elif score >= max(1, total - 2):
+                        st.markdown("Good job — review the missed points once.")
+                    else:
+                        st.markdown("You may need to revise the key concepts again.")
+
+                    for line in result["feedback"]:
+                        st.markdown(line)
+
+        with flashcard_tab:
+            flashcards = activity.get("flashcards", [])
+
+            if not flashcards:
+                st.info("No flashcards available.")
+            else:
+                for i, card in enumerate(flashcards, start=1):
+                    with st.expander(f"Flashcard {i}: {card.get('front', '')}"):
+                        st.markdown(card.get("back", ""))
+
+        with tips_tab:
+            tips = activity.get("revision_tips", [])
+
+            if not tips:
+                st.info("No revision tips available.")
+            else:
+                for tip in tips:
+                    st.markdown(f"- {tip}")
+
+        with free_response_tab:
+            st.caption("Use this if you want ARCA to review your own written answer.")
+
+            student_answers = st.text_area(
+                "Write your answer here",
+                placeholder="Explain the topic in your own words...",
+                height=150,
+            )
+
+            if st.button("Get Written Feedback", use_container_width=True):
+                if not student_answers.strip():
+                    st.warning("Please write your answer first.")
+                else:
+                    with st.spinner("Checking your understanding..."):
+                        feedback = evaluate_quiz_answers(
+                            original_answer=st.session_state.latest_student_answer,
+                            student_answers=student_answers,
+                        )
+
+                    st.session_state.latest_quiz_feedback = feedback
+
+            if st.session_state.latest_quiz_feedback:
+                st.markdown("### Feedback")
+                st.markdown(st.session_state.latest_quiz_feedback)
+
+
+def show_followup_box():
+    if not st.session_state.latest_student_answer:
+        return
+
+    st.markdown("### 💬 Ask More About This Answer")
+
+    followup_question = st.text_area(
+        "Ask a follow-up question or give feedback",
+        placeholder="Example: Can you explain the second point more simply? Can you turn this into bullets? What should I study next?",
+        height=110,
+    )
+
+    if st.button("Ask Follow-up", use_container_width=True):
+        if not followup_question.strip():
+            st.warning("Please type a follow-up question first.")
+            return
+
+        followup_prompt = f"""
+The user is asking a follow-up question about the latest ARCA answer.
+
+Latest answer:
+{st.session_state.latest_student_answer}
+
+User follow-up:
+{followup_question}
+
+Answer clearly. If the follow-up asks for a rewrite, formatting, simplification, deeper explanation, or next steps, respond based on the latest answer.
+""".strip()
+
+        with st.spinner("Answering follow-up..."):
+            result = run_pipeline(
+                question=followup_prompt,
+                urls=[],
+                uploaded_pdfs=[],
+                uploaded_docs=[],
+                uploaded_ppts=[],
+                uploaded_images=[],
+                mode="Use my sources",
+                user_mode=st.session_state.latest_user_mode or "Student Mode",
+                analysis_mode=st.session_state.latest_analysis_mode or "Standard Research",
+                previous_context=st.session_state.research_context,
+                chat_history=[
+                    (item["role"], item["message"])
+                    for item in st.session_state.chat_history
+                ],
+                max_web_results=2,
+                prefer_trusted_sources=True,
+                research_depth="Fast Research",
+            )
+
+        answer = result["answer"]
+
+        st.session_state.latest_student_answer = answer
+        st.session_state.latest_sources = result.get("sources", st.session_state.latest_sources)
+        st.session_state.latest_metadata = result.get("metadata", st.session_state.latest_metadata)
+        st.session_state.learning_activity = None
+        st.session_state.quiz_score = None
+
+        st.session_state.chat_history.append(
+            {
+                "role": "user",
+                "message": followup_question,
+            }
+        )
+
+        st.session_state.chat_history.append(
+            {
+                "role": "assistant",
+                "message": answer,
+                "raw_answer": answer,
+                "sources": result.get("sources", []),
+            }
+        )
+
+        st.rerun()
 
 
 def initialize_session_state():
@@ -797,6 +1184,8 @@ def initialize_session_state():
         "source_mode_widget": "Use my sources",
         "analysis_mode_widget": "Standard Research",
         "research_depth_widget": "Fast Research",
+        "learning_activity": None,
+        "quiz_score": None,
     }
 
     for key, value in defaults.items():
@@ -892,6 +1281,8 @@ with st.sidebar:
         st.session_state.latest_analysis_mode = ""
         st.session_state.latest_metadata = {}
         st.session_state.question_box = ""
+        st.session_state.learning_activity = None
+        st.session_state.quiz_score = None
         st.rerun()
 
 
@@ -913,6 +1304,11 @@ with research_tab:
 
         with st.chat_message(role):
             if role == "assistant":
+                render_answer_audio_button(
+                    answer=item.get("raw_answer", message),
+                    key_prefix=f"history_{abs(hash(message))}",
+                )
+
                 st.markdown(message, unsafe_allow_html=True)
 
                 if sources:
@@ -942,11 +1338,83 @@ with research_tab:
             uploaded_files
         )
 
+        effective_question = prepare_effective_question(
+            question=question,
+            uploaded_files=uploaded_files,
+            urls=urls,
+        )
+
+        if effective_question == "__ABOUT_ARCA__":
+            answer = build_about_arca_answer()
+            sources = []
+            metadata = {
+                "response_time_seconds": 0,
+                "input_tokens_estimate": 0,
+                "output_tokens_estimate": 0,
+                "total_tokens_estimate": 0,
+                "estimated_cost_level": "Very low",
+                "workflow_type": "About Agent ARCA",
+                "research_depth": "N/A",
+                "trust_score": 100,
+                "trust_label": "Self description",
+                "trust_message": "This answer describes Agent ARCA's own capabilities.",
+                "source_count": 0,
+            }
+
+            with st.chat_message("assistant"):
+                show_answer_badges(
+                    user_mode=user_mode,
+                    analysis_mode=analysis_mode,
+                    research_depth=research_depth,
+                    source_mode="About ARCA",
+                    output_style=output_style,
+                )
+
+                top_cols = st.columns([0.85, 0.15])
+
+                with top_cols[0]:
+                    st.markdown("### Answer")
+
+                with top_cols[1]:
+                    render_answer_audio_button(
+                        answer=answer,
+                        key_prefix="about_arca",
+                    )
+
+                st.markdown('<div class="answer-card">', unsafe_allow_html=True)
+                st.markdown(answer, unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            st.session_state.latest_student_answer = answer
+            st.session_state.latest_sources = sources
+            st.session_state.latest_question = question
+            st.session_state.latest_user_mode = user_mode
+            st.session_state.latest_analysis_mode = analysis_mode
+            st.session_state.latest_metadata = metadata
+            st.session_state.learning_activity = None
+            st.session_state.quiz_score = None
+
+            st.session_state.chat_history.append(
+                {
+                    "role": "assistant",
+                    "message": answer,
+                    "raw_answer": answer,
+                    "sources": [],
+                }
+            )
+
+            st.rerun()
+
+        effective_source_mode = source_mode
+
+        if (uploaded_files or urls) and source_mode == "Search the web":
+            effective_source_mode = "Use my sources + web search"
+
         style_instruction = build_style_instruction(output_style)
 
         pipeline_question = f"""
 User question:
-{question}
+{effective_question}
 
 Output style requested:
 {output_style}
@@ -964,7 +1432,7 @@ Style instruction:
                     uploaded_docs=uploaded_docs,
                     uploaded_ppts=uploaded_ppts,
                     uploaded_images=uploaded_images,
-                    mode=source_mode,
+                    mode=effective_source_mode,
                     user_mode=user_mode,
                     analysis_mode=analysis_mode,
                     previous_context=st.session_state.research_context,
@@ -989,9 +1457,20 @@ Style instruction:
                 user_mode=user_mode,
                 analysis_mode=analysis_mode,
                 research_depth=research_depth,
-                source_mode=source_mode,
+                source_mode=effective_source_mode,
                 output_style=output_style,
             )
+
+            top_cols = st.columns([0.85, 0.15])
+
+            with top_cols[0]:
+                st.markdown("### Answer")
+
+            with top_cols[1]:
+                render_answer_audio_button(
+                    answer=answer,
+                    key_prefix=f"latest_{datetime.now().timestamp()}",
+                )
 
             st.markdown('<div class="answer-card">', unsafe_allow_html=True)
             st.markdown(clickable_answer, unsafe_allow_html=True)
@@ -1013,6 +1492,8 @@ Style instruction:
             st.session_state.latest_user_mode = user_mode
             st.session_state.latest_analysis_mode = analysis_mode
             st.session_state.latest_metadata = metadata
+            st.session_state.learning_activity = None
+            st.session_state.quiz_score = None
 
         st.session_state.chat_history.append(
             {
@@ -1052,7 +1533,7 @@ Style instruction:
             if st.button("📄 Export", use_container_width=True):
                 st.info("Open the Exports tab.")
 
-        show_audio_section()
+        show_followup_box()
         show_quiz_section(user_mode)
 
 
