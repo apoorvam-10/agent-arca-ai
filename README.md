@@ -363,14 +363,28 @@ This project helped strengthen skills in:
 
 ---
 
-## Resume Summary
-
-Built a multimodal GenAI research assistant using Python, Streamlit, Gemini API, and Tavily Search to process PDFs, DOCX, PPTX, images, URLs, YouTube transcripts, and web search results into source-backed summaries, study guides, reports, and presentation decks. Implemented modular pipelines for document parsing, source retrieval, ranking, prompt orchestration, LLM generation, dashboard metrics, interactive learning practice, audio playback, and export generation.
-
----
-
 ## Project Status
 
 Agent ARCA v1 is complete as a portfolio-ready prototype.
 
-The next milestone is Agent ARCA v2: a production-style Next.js + FastAPI application with real-time streaming, persistent sessions, and cloud storage.
+Current version includes:
+- multimodal file and web ingestion
+- source-backed AI responses
+- trust scoring and dashboard metrics
+- interactive learning practice
+- follow-up Q&A
+- Word, PDF, and PowerPoint exports
+
+Next milestone: Agent ARCA v2 with a Next.js frontend, FastAPI backend, streaming responses, persistent sessions, and cloud storage.
+
+---
+
+## Impact
+
+Agent ARCA demonstrates how multimodal GenAI can support research, learning, and decision-making by combining document processing, web retrieval, source-grounded generation, trust scoring, and export-ready outputs in one workflow.
+
+Key outcomes:
+- Reduced manual research effort by converting long-form sources into structured summaries and study outputs.
+- Improved transparency with source markers, evidence maps, and trust scoring.
+- Supported multiple user workflows including studying, professional research, presentations, and report generation.
+- Improved usability with quick-start actions, unified uploads, follow-up Q&A, audio playback, and interactive learning practice.
