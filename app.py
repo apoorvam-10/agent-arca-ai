@@ -30,9 +30,9 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1rem;
+        padding-top: 2.7rem;
         padding-bottom: 1rem;
-        max-width: 1180px;
+        max-width: 1240px;
     }
 
     section[data-testid="stSidebar"] .block-container {
@@ -40,45 +40,65 @@ st.markdown(
     }
 
     div[data-testid="stVerticalBlock"] {
-        gap: 0.45rem;
+        gap: 0.38rem;
     }
 
     .arca-hero {
-        padding: 1rem 1.2rem;
+        padding: 0.65rem 1.05rem 0.75rem 1.05rem;
         border: 1px solid rgba(120,120,120,0.25);
         border-radius: 18px;
         background: linear-gradient(135deg, rgba(120,120,255,0.08), rgba(120,255,220,0.05));
-        margin-bottom: 0.65rem;
+        margin-bottom: 0.35rem;
     }
 
     .arca-title {
-        font-size: 2rem;
-        font-weight: 750;
-        margin-bottom: 0.15rem;
+        font-size: 1.95rem;
+        font-weight: 800;
+        line-height: 1.15;
+        margin-top: 0;
+        margin-bottom: 0.2rem;
     }
 
     .arca-subtitle {
-        color: rgba(150,150,150,0.95);
-        font-size: 1rem;
+        color: rgba(180,180,180,0.95);
+        font-size: 0.92rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .feature-strip {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+        margin-top: 0.35rem;
+        margin-bottom: 0.05rem;
+    }
+
+    .feature-pill {
+        padding: 0.22rem 0.58rem;
+        border-radius: 999px;
+        border: 1px solid rgba(120,120,120,0.22);
+        background: rgba(250,250,250,0.035);
+        color: rgba(190,190,190,0.95);
+        font-size: 0.78rem;
     }
 
     .arca-card {
-        padding: 0.85rem 1rem;
+        padding: 0.7rem 0.9rem;
         border: 1px solid rgba(120,120,120,0.22);
         border-radius: 16px;
         background: rgba(250,250,250,0.03);
-        min-height: 95px;
+        min-height: 78px;
     }
 
     .arca-card-title {
         font-weight: 700;
-        font-size: 1rem;
-        margin-bottom: 0.25rem;
+        font-size: 0.98rem;
+        margin-bottom: 0.18rem;
     }
 
     .arca-card-text {
-        color: rgba(150,150,150,0.95);
-        font-size: 0.9rem;
+        color: rgba(160,160,160,0.95);
+        font-size: 0.84rem;
     }
 
     .arca-badge {
@@ -101,8 +121,17 @@ st.markdown(
     }
 
     .input-wrap {
-        padding: 0.55rem 0;
-        margin-top: 0.3rem;
+        padding: 0.25rem 0 0.35rem 0;
+        margin-top: 0.15rem;
+    }
+
+    .empty-state {
+        margin-top: 0.75rem;
+        padding: 0.9rem 1.05rem;
+        border: 1px dashed rgba(150,150,150,0.28);
+        border-radius: 18px;
+        background: rgba(250,250,250,0.025);
+        color: rgba(190,190,190,0.95);
     }
 
     .small-muted {
@@ -115,18 +144,18 @@ st.markdown(
     }
 
     .stTabs [data-baseweb="tab"] {
-        height: 2.35rem;
+        height: 2.25rem;
         padding: 0 0.65rem;
     }
 
     h1, h2, h3 {
-        margin-top: 0.25rem;
-        margin-bottom: 0.35rem;
+        margin-top: 0.2rem;
+        margin-bottom: 0.3rem;
     }
 
     hr {
-        margin-top: 0.7rem;
-        margin-bottom: 0.7rem;
+        margin-top: 0.6rem;
+        margin-bottom: 0.6rem;
     }
 
     button[kind="secondary"] {
@@ -136,7 +165,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 
 def make_clickable_source_markers(answer, sources):
     for i, src in enumerate(sources, start=1):
@@ -605,13 +633,19 @@ def show_hero():
         <div class="arca-hero">
             <div class="arca-title">Agent ARCA</div>
             <div class="arca-subtitle">
-                Research faster, understand better, and turn sources into summaries, reports, slides, and study tools.
+                Multimodal GenAI assistant for research, learning, trusted summaries, reports, and presentations.
+            </div>
+            <div class="feature-strip">
+                <span class="feature-pill">📄 Files</span>
+                <span class="feature-pill">🔎 Web research</span>
+                <span class="feature-pill">🎓 Study tools</span>
+                <span class="feature-pill">📊 Trust scoring</span>
+                <span class="feature-pill">📤 Exports</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
 
 def apply_quick_start(mode_name):
     st.session_state.pending_quick_start = mode_name
@@ -1305,14 +1339,25 @@ with st.sidebar:
 show_start_cards()
 show_example_prompts()
 
-question = render_question_bar()
-
 research_tab, dashboard_tab, workspace_tab, exports_tab = st.tabs(
     ["🔎 Research", "📊 Dashboard", "🗂️ Workspace", "📄 Exports"]
 )
 
 
 with research_tab:
+    question = render_question_bar()
+
+    if not st.session_state.chat_history and not st.session_state.latest_student_answer:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <strong>Start your research here.</strong>
+                Upload files, paste links, choose a mode, or ask a question.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     for item in st.session_state.chat_history:
         role = item["role"]
         message = item["message"]
