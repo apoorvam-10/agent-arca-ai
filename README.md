@@ -1,16 +1,16 @@
 # Agent ARCA — Multimodal GenAI Research & Learning Assistant
 
-Agent ARCA is a multimodal AI research assistant that helps students and professionals turn documents, web sources, videos, and images into trusted summaries, study guides, decision briefs, reports, and presentation decks.
+Agent ARCA is a multimodal AI research and learning assistant that helps users turn files, links, web results, videos, screenshots, and images into trusted summaries, study guides, decision briefs, reports, and presentation decks.
 
-It combines document processing, web retrieval, LLM workflows, source reliability scoring, interactive learning tools, and export generation inside a simple research workspace.
+It is designed for students, researchers, and professionals who need to understand information quickly, compare sources, check credibility, and export polished outputs.
 
 ---
 
 ## Overview
 
-Research and learning often require users to work across many formats: PDFs, Word documents, PowerPoint decks, screenshots, YouTube videos, web articles, and search results. Manually reading, comparing, summarizing, and converting this information into usable outputs can take hours.
+Research and learning often require switching between many tools: PDFs, websites, lecture slides, screenshots, YouTube videos, notes, search engines, and document editors. Agent ARCA brings these workflows into one AI-powered interface.
 
-Agent ARCA solves this by giving users a single AI-powered workspace where they can upload files, paste links, ask questions, compare sources, generate structured answers, evaluate source credibility, and export professional outputs.
+The app can process uploaded files, pasted links, web search results, and visual content, then generate source-backed answers with trust scoring, follow-up questions, learning practice, and export-ready reports.
 
 ---
 
@@ -18,73 +18,103 @@ Agent ARCA solves this by giving users a single AI-powered workspace where they 
 
 ### Multimodal Input
 
-Agent ARCA supports:
+Agent ARCA supports multiple content types:
 
-* PDF files
+* PDF documents
 * Word documents
-* PowerPoint decks
-* screenshots and images
-* URLs and article links
+* PowerPoint presentations
+* Screenshots and images
+* URLs and web articles
 * YouTube transcripts
-* web search
-* voice input
+* Web search results
 
 ### AI Research Workflows
 
-Users can generate:
-
-* simple summaries
-* detailed research answers
-* study guides
-* decision briefs
-* presentation notes
-* source comparisons
-* evidence maps
-* follow-up answers
+* Source-backed answers
+* Topic summaries
+* Detailed research responses
+* Decision briefs
+* Presentation notes
+* Source comparison
+* Evidence maps
+* Follow-up Q&A
 
 ### Student Learning Mode
 
-Student Mode helps users understand and retain information through:
+Student Mode helps users understand topics more clearly through:
 
-* beginner-friendly explanations
-* quiz generation
-* multiple-choice practice
-* flashcards
-* revision tips
-* written answer feedback
-* audio playback of answers
+* Beginner-friendly explanations
+* Study guides
+* Multiple-choice quizzes
+* Flashcards
+* Revision tips
+* Written answer feedback
+* Audio playback for answers
 
 ### Professional Research Mode
 
-General Mode supports work and decision-making use cases through:
+General Mode supports professional use cases such as:
 
-* executive summaries
-* decision briefs
-* source-backed analysis
-* reliability scoring
-* dashboard metrics
-* exportable reports and decks
+* Research summaries
+* Business decision briefs
+* Source comparison
+* Risk and benefit analysis
+* Presentation-ready notes
+* Export-ready documentation
 
-### Source Reliability & Trust Scoring
+### Source Reliability and Trust Scoring
 
-Agent ARCA ranks sources using reliability signals and displays:
+Agent ARCA adds transparency to AI-generated answers by ranking and labeling sources.
 
-* source trust score
-* evidence mapping
-* citation-style source markers
-* source breakdown
-* response time
-* estimated token usage
-* cost level estimate
+It includes:
+
+* Source reliability scoring
+* Trust dashboard
+* Citation-style source markers
+* Evidence mapping
+* Source breakdown by type
+* Reliability labels and reasoning
 
 ### Export Options
 
-Agent ARCA can generate:
+Generated research can be exported as:
 
-* Word research reports
-* PDF reports
-* PowerPoint decks
-* saved research collections
+* Word report
+* PDF report
+* PowerPoint deck
+* Saved markdown research collection
+
+---
+
+## Screenshots
+
+### Landing Page
+
+![Landing Page](screenshots/landing.png)
+
+### Research Response
+
+![Research Response](screenshots/research-response.png)
+
+### Research Sources and Evidence
+
+![Research Sources 1](screenshots/research-sources-1.png)
+
+### Research Continuation and Source Details
+
+![Research Sources 2](screenshots/research-sources-2.png)
+
+### Learning Practice
+
+![Learning Practice](screenshots/learning-practice.png)
+
+### Dashboard
+
+![Dashboard](screenshots/dashboard.png)
+
+### Exports
+
+![Exports](screenshots/exports.png)
 
 ---
 
@@ -97,82 +127,118 @@ Agent ARCA can generate:
 * Google Gemini API
 * Tavily Search API
 
-### Document Processing
+### Document and Media Processing
 
 * PyMuPDF
 * python-docx
 * python-pptx
-
-### Export Generation
-
 * ReportLab
-* python-docx
-* python-pptx
-
-### Video & Audio
-
+* BeautifulSoup
+* requests
 * youtube-transcript-api
 * yt-dlp
 * webvtt-py
 * gTTS
 
-### Other
+### AI and Retrieval
 
-* BeautifulSoup
-* Requests
-* Streamlit session state
-* Streamlit caching
+* Gemini-based generation
+* Multimodal content processing
+* Prompt orchestration
+* Source ranking
+* Cached retrieval
+* Trust scoring
+
+### Development Tools
+
+* Git
+* GitHub
+* Streamlit Cloud
+* Python virtual environment
+* Environment secrets
 
 ---
 
 ## Architecture
 
 ```text
-User
- |
- | Upload files / paste links / ask questions
- v
-Streamlit UI
- |
- | User mode, source mode, output style, attachments
- v
-Agent ARCA Pipeline
- |
- |-- PDF Reader
- |-- DOCX Reader
- |-- PPTX Reader
- |-- Image Reader
- |-- URL Reader
- |-- YouTube Transcript Reader
- |-- Web Search Retriever
- |-- Source Reliability Ranker
- |-- Prompt Builder
- |-- Gemini Response Generator
- |-- Export Generator
- |
- v
-Research Output
- |
- |-- Source-backed answer
- |-- Trust dashboard
- |-- Follow-up Q&A
- |-- Quiz and flashcards
- |-- Audio playback
- |-- Word/PDF/PPT exports
+User Input
+   |
+   |-- Files: PDF, DOCX, PPTX, Images
+   |-- Links: URLs, YouTube
+   |-- Web Search
+   |
+   v
+Source Processing Layer
+   |
+   |-- Document parsing
+   |-- Web extraction
+   |-- YouTube transcript extraction
+   |-- Image understanding
+   |-- Search retrieval
+   |
+   v
+Source Ranking and Trust Layer
+   |
+   |-- Source reliability scoring
+   |-- Trusted domain detection
+   |-- Evidence organization
+   |
+   v
+LLM Orchestration Layer
+   |
+   |-- Prompt building
+   |-- Student Mode
+   |-- General Mode
+   |-- Output style control
+   |-- Follow-up Q&A
+   |
+   v
+User Output
+   |
+   |-- Answer
+   |-- Sources
+   |-- Trust dashboard
+   |-- Quiz and flashcards
+   |-- Word/PDF/PPT exports
 ```
 
 ---
 
 ## How It Works
 
-1. The user chooses an answer style such as Simple Summary, Study Guide, Detailed Research, Presentation Notes, or Decision Brief.
-2. The user uploads files, pastes URLs, or enables web search.
-3. Agent ARCA extracts text from uploaded files, URLs, videos, and images.
-4. The pipeline retrieves additional web sources if needed.
-5. Sources are ranked using reliability heuristics.
-6. Gemini generates a structured, source-backed answer.
-7. The app displays the answer with source markers and dashboard metrics.
-8. Users can ask follow-up questions, generate quizzes, create flashcards, listen to the answer, save findings, or export reports.
+1. The user asks a question, uploads files, or pastes links.
+2. Agent ARCA extracts text and context from the provided sources.
+3. If enabled, the app searches the web using Tavily.
+4. Sources are ranked and scored for reliability.
+5. Gemini generates a source-aware response based on the selected mode.
+6. The user can ask follow-up questions, generate learning practice, save findings, or export the result.
+
+---
+
+## Project Structure
+
+```text
+agent-arca-ai/
+│
+├── app.py
+├── pipeline.py
+├── requirements.txt
+├── README.md
+├── .gitignore
+│
+├── screenshots/
+│   ├── landing.png
+│   ├── research-response.png
+│   ├── research-sources-1.png
+│   ├── research-sources-2.png
+│   ├── learning-practice.png
+│   ├── dashboard.png
+│   └── exports.png
+│
+└── .streamlit/
+    └── secrets.toml
+```
 
 ---
 
@@ -200,18 +266,18 @@ pip install -r requirements.txt
 
 ### 4. Add API keys
 
-Create a Streamlit secrets file:
+Create a `.streamlit` folder and a `secrets.toml` file:
 
 ```bash
 mkdir -p .streamlit
 nano .streamlit/secrets.toml
 ```
 
-Add:
+Add your keys:
 
 ```toml
-GEMINI_API_KEY = "your_gemini_api_key_here"
-TAVILY_API_KEY = "your_tavily_api_key_here"
+GEMINI_API_KEY = "your_gemini_api_key"
+TAVILY_API_KEY = "your_tavily_api_key"
 ```
 
 ### 5. Run the app
@@ -224,95 +290,101 @@ streamlit run app.py
 
 ## Environment Variables
 
-The app requires:
+Agent ARCA uses the following secrets:
 
-```text
-GEMINI_API_KEY
-TAVILY_API_KEY
+```toml
+GEMINI_API_KEY = "your_gemini_api_key"
+TAVILY_API_KEY = "your_tavily_api_key"
 ```
 
-These should be stored in:
-
-```text
-.streamlit/secrets.toml
-```
-
-Do not commit secrets to GitHub.
-
----
-
-## Screenshots
-
-Add screenshots in a `screenshots/` folder.
-
-Recommended screenshots:
-
-```text
-screenshots/landing.png
-screenshots/research-response.png
-screenshots/dashboard.png
-screenshots/learning-practice.png
-screenshots/exports.png
-```
-
-Example markdown:
-
-```markdown
-![Landing Page](screenshots/landing.png)
-![Research Response](screenshots/research-response.png)
-![Dashboard](screenshots/dashboard.png)
-![Learning Practice](screenshots/learning-practice.png)
-![Exports](screenshots/exports.png)
-```
+Do not commit `.streamlit/secrets.toml` to GitHub.
 
 ---
 
 ## Example Use Cases
 
-### Student
-
-A student can upload lecture notes or a PDF and ask:
+### Student Learning
 
 ```text
-Summarize this in simple terms and create quiz questions.
+Explain retrieval-augmented generation like I am a beginner and create a short study guide.
 ```
 
-Agent ARCA returns a study guide, quiz, flashcards, and revision tips.
-
-### Professional
-
-A professional can paste multiple sources and ask:
+### Research Summary
 
 ```text
-Compare these sources and create a decision brief.
+Summarize how AI agents improve enterprise knowledge management in 5 concise bullets with risks and use cases.
 ```
 
-Agent ARCA returns source-backed analysis, evidence mapping, trust scores, and exportable reports.
-
-### Research Workflow
-
-A user can ask:
+### File Summarization
 
 ```text
-Research this topic using reliable sources and create presentation notes.
+Summarize this document in simple terms and list the key takeaways.
 ```
 
-Agent ARCA retrieves sources, ranks reliability, generates structured notes, and exports a PowerPoint deck.
+### Source Comparison
+
+```text
+Compare these sources and identify agreements, conflicts, and missing information.
+```
+
+### Presentation Notes
+
+```text
+Create presentation notes from this topic with slide-ready bullet points.
+```
 
 ---
 
 ## Current Version
 
-### Agent ARCA v1
+Agent ARCA v1 is complete as a portfolio-ready prototype.
 
-This version focuses on:
+Current version includes:
 
-* multimodal document and web research
-* source-grounded generation
-* student and professional workflows
-* source reliability scoring
-* export-ready reports and decks
-* production-style Streamlit UX
+* Multimodal file and web ingestion
+* Source-backed AI responses
+* Student and general research modes
+* Output style selection
+* Source reliability scoring
+* Trust dashboard
+* Follow-up Q&A
+* Quiz and flashcard generation
+* Audio playback
+* Visual snapshot support
+* Saved research workspace
+* Word, PDF, and PowerPoint exports
+
+---
+
+## Impact
+
+Agent ARCA demonstrates how multimodal GenAI can support research, learning, and decision-making by combining document processing, web retrieval, source-grounded generation, trust scoring, and export-ready outputs in one workflow.
+
+Key outcomes:
+
+* Reduced manual research effort by converting long-form sources into structured summaries and study outputs.
+* Improved transparency with source markers, evidence maps, and trust scoring.
+* Supported multiple workflows including studying, professional research, presentations, and report generation.
+* Improved usability with quick-start actions, unified uploads, follow-up Q&A, audio playback, and interactive learning practice.
+* Created export-ready deliverables across Word, PDF, and PowerPoint formats.
+
+---
+
+## What I Learned
+
+Building Agent ARCA helped strengthen practical experience in:
+
+* Multimodal GenAI application design
+* LLM workflow orchestration
+* Prompt engineering
+* Retrieval-augmented generation concepts
+* Document processing
+* Source ranking and trust scoring
+* Streamlit app development
+* API integration
+* Export generation
+* Debugging cloud deployment issues
+* Building user-focused AI product workflows
 
 ---
 
@@ -322,69 +394,26 @@ Planned improvements for Agent ARCA v2:
 
 * Next.js frontend
 * FastAPI backend
-* real-time streaming responses
-* persistent user accounts
-* saved cloud sessions
-* vector search over uploaded documents
-* stronger agent orchestration
-* advanced PowerPoint design
-* cloud file storage
-* background processing for long documents
-
-Target production architecture:
-
-```text
-Frontend: Next.js + Tailwind
-Backend: FastAPI
-Database: PostgreSQL / Supabase
-Storage: Supabase Storage / S3
-Async Jobs: Redis + Celery or RQ
-AI Layer: Gemini / OpenAI-compatible LLM APIs
-Search: Tavily
-Deployment: Vercel + Render/Fly.io/AWS
-```
+* Streaming AI responses
+* Persistent user sessions
+* User authentication
+* Cloud file storage
+* PostgreSQL database integration
+* Background processing for large files
+* More advanced citation tracing
+* Multi-agent workflow orchestration
+* Deployment with production-ready infrastructure
 
 ---
 
-## What I Learned
+## Repository
 
-This project helped strengthen skills in:
-
-* AI application design
-* multimodal GenAI workflows
-* prompt orchestration
-* document processing
-* source-grounded generation
-* API integration
-* Streamlit product UX
-* export generation
-* reliability and latency optimization
-* GitHub project deployment
+GitHub Repository: https://github.com/apoorvam-10/agent-arca-ai
 
 ---
 
-## Project Status
+## Author
 
-Agent ARCA v1 is complete as a portfolio-ready prototype.
+Built by Apoorva Makena.
 
-Current version includes:
-- multimodal file and web ingestion
-- source-backed AI responses
-- trust scoring and dashboard metrics
-- interactive learning practice
-- follow-up Q&A
-- Word, PDF, and PowerPoint exports
-
-Next milestone: Agent ARCA v2 with a Next.js frontend, FastAPI backend, streaming responses, persistent sessions, and cloud storage.
-
----
-
-## Impact
-
-Agent ARCA demonstrates how multimodal GenAI can support research, learning, and decision-making by combining document processing, web retrieval, source-grounded generation, trust scoring, and export-ready outputs in one workflow.
-
-Key outcomes:
-- Reduced manual research effort by converting long-form sources into structured summaries and study outputs.
-- Improved transparency with source markers, evidence maps, and trust scoring.
-- Supported multiple user workflows including studying, professional research, presentations, and report generation.
-- Improved usability with quick-start actions, unified uploads, follow-up Q&A, audio playback, and interactive learning practice.
+GitHub: https://github.com/apoorvam-10
